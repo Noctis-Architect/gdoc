@@ -143,6 +143,56 @@ is_gdoc_source_dir() {
     [[ -f "${dir}/bot.py" && -f "${dir}/requirements.txt" ]]
 }
 
+sync_install_dir() {
+    local dir="$1"
+    if [[ ! -d "${dir}/.git" ]]; then
+        return 0
+    fi
+
+    log_info "به‌روزرسانی نصب موجود از گیت‌هاب..."
+    if git -C "${dir}" fetch --depth 1 origin "${GIT_BRANCH}" 2>/dev/null \
+        && git -C "${dir}" checkout "${GIT_BRANCH}" 2>/dev/null \
+        && git -C "${dir}" reset --hard "origin/${GIT_BRANCH}" 2>/dev/null; then
+        log_info "نصب موجود به‌روز شد."
+    else
+        log_warn "git pull ناموفق بود؛ فایل‌های گم‌شده به‌صورت دستی دانلود می‌شوند."
+    fi
+}
+
+ensure_ssl_script() {
+    local dir="$1"
+    local ssl_script="${dir}/scripts/setup_webhook_ssl.sh"
+
+    if [[ -f "${ssl_script}" ]]; then
+        chmod +x "${ssl_script}" 2>/dev/null || true
+        return 0
+    fi
+
+    log_info "اسکریپت SSL یافت نشد — دانلود از گیت‌هاب..."
+    mkdir -p "${dir}/scripts"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        log_error "curl برای دانلود اسکریپت SSL لازم است."
+        return 1
+    fi
+
+    if curl -fsSL \
+        "https://raw.githubusercontent.com/Noctis-Architect/gdoc/${GIT_BRANCH}/scripts/setup_webhook_ssl.sh" \
+        -o "${ssl_script}"; then
+        chmod +x "${ssl_script}"
+        log_info "اسکریپت SSL دانلود شد."
+        return 0
+    fi
+
+    log_error "دانلود اسکریپت SSL ناموفق بود: ${ssl_script}"
+    return 1
+}
+
+finalize_install_dir() {
+    sync_install_dir "${INSTALL_DIR}"
+    ensure_ssl_script "${INSTALL_DIR}" || true
+}
+
 resolve_install_dir() {
     local script_path="${BASH_SOURCE[0]:-}"
     local candidate=""
@@ -152,6 +202,7 @@ resolve_install_dir() {
         if is_gdoc_source_dir "${candidate}"; then
             INSTALL_DIR="${candidate}"
             log_info "Using existing source at ${INSTALL_DIR}"
+            finalize_install_dir
             return 0
         fi
     fi
@@ -165,6 +216,7 @@ resolve_install_dir() {
     if is_gdoc_source_dir "${candidate}"; then
         INSTALL_DIR="${candidate}"
         log_info "Using existing installation at ${INSTALL_DIR}"
+        finalize_install_dir
         return 0
     fi
 
@@ -189,6 +241,7 @@ resolve_install_dir() {
     git clone --depth 1 --branch "${GIT_BRANCH}" "${GITHUB_REPO}" "${candidate}"
     INSTALL_DIR="${candidate}"
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    finalize_install_dir
 }
 
 update_paths() {
@@ -295,12 +348,12 @@ setup_webhook_ssl() {
     local cf_token="${3:-}"
     local ssl_script="${INSTALL_DIR}/scripts/setup_webhook_ssl.sh"
 
-    if [[ ! -f "${ssl_script}" ]]; then
-        log_error "SSL setup script not found: ${ssl_script}"
+    if ! ensure_ssl_script "${INSTALL_DIR}"; then
+        log_error "اسکریپت SSL در دسترس نیست. نصب را دوباره اجرا کنید یا دستی:"
+        log_error "  curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/scripts/setup_webhook_ssl.sh -o ${ssl_script}"
         exit 1
     fi
 
-    chmod +x "${ssl_script}"
     log_info "Setting up nginx + SSL for ${domain}..."
     bash "${ssl_script}" "${domain}" "${email}" "${cf_token}" 8443 /webhook
 }
