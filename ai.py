@@ -152,7 +152,8 @@ class AIClassifier:
     async def classify(
         self,
         message_text: str,
-        custom_rules: str,
+        ban_rules: str,
+        suspect_rules: str,
         strictness: str,
     ) -> ClassificationResult:
         if not message_text.strip():
@@ -162,7 +163,7 @@ class AIClassifier:
             return ClassificationResult("SAFE", "AI not configured")
 
         strictness = strictness if strictness in STRICTNESS_INSTRUCTIONS else "medium"
-        user_prompt = self._build_user_prompt(message_text, custom_rules, strictness)
+        user_prompt = self._build_user_prompt(message_text, ban_rules, suspect_rules, strictness)
 
         async with self._semaphore:
             for attempt in range(3):
@@ -189,12 +190,23 @@ class AIClassifier:
 
         return ClassificationResult("SAFE", "AI retries exhausted")
 
-    def _build_user_prompt(self, message_text: str, custom_rules: str, strictness: str) -> str:
+    def _build_user_prompt(
+        self,
+        message_text: str,
+        ban_rules: str,
+        suspect_rules: str,
+        strictness: str,
+    ) -> str:
         parts = [
             STRICTNESS_INSTRUCTIONS[strictness],
             "",
-            "GROUP CUSTOM RULES:",
-            custom_rules.strip() or "(No additional group rules configured.)",
+            "GROUP BAN RULES (breaking any of these = classify as VIOLATION):",
+            ban_rules.strip() or "(No ban rules configured.)",
+            "",
+            "GROUP SUSPECT RULES (breaking any of these = classify as SUSPECT, not VIOLATION):",
+            suspect_rules.strip() or "(No suspect rules configured.)",
+            "",
+            "If a message breaks both ban and suspect rules, classify as VIOLATION.",
             "",
             "MESSAGE TO CLASSIFY:",
             message_text[:3000],

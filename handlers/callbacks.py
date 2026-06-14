@@ -97,7 +97,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "threshold": _show_threshold,
         "set_threshold": _set_threshold,
         "toggle": _toggle_moderation,
-        "rules": _prompt_rules,
+        "rules": _show_rules_menu,
+        "rules_ban": _prompt_ban_rules,
+        "rules_suspect": _prompt_suspect_rules,
         "blacklist": _show_blacklist,
         "bl_add_kw": _prompt_blacklist_keyword,
         "bl_add_rx": _prompt_blacklist_regex,
@@ -418,15 +420,43 @@ async def _toggle_moderation(query, ctx: BotContext, chat_id: int, _extra: str, 
     await _show_group_panel(query, ctx, chat_id, "", _context)
 
 
-async def _prompt_rules(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
-    ctx.pending_inputs[query.from_user.id] = {"type": "rules", "chat_id": chat_id}
+async def _show_rules_menu(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    await query.edit_message_text(
+        i18n.PROMPT_RULES,
+        reply_markup=await _rules_menu_kb(chat_id, query, ctx),
+        parse_mode="Markdown",
+    )
+
+
+async def _rules_menu_kb(chat_id: int, query, ctx: BotContext):
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    return keyboards.rules_menu_keyboard(chat_id, from_sa=from_sa)
+
+
+async def _prompt_ban_rules(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    ctx.pending_inputs[query.from_user.id] = {"type": "rules_ban", "chat_id": chat_id}
     group = await ctx.db.group_to_dict(chat_id)
     current = (group or {}).get("custom_rules", "")
     preview = current[:500] + ("..." if len(current) > 500 else "")
     await query.edit_message_text(
-        i18n.PROMPT_RULES.format(preview=preview or i18n.PROMPT_RULES_NONE),
+        i18n.PROMPT_RULES_BAN.format(preview=preview or i18n.PROMPT_RULES_NONE),
         reply_markup=await _back_kb(chat_id, query, ctx),
     )
+
+
+async def _prompt_suspect_rules(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    ctx.pending_inputs[query.from_user.id] = {"type": "rules_suspect", "chat_id": chat_id}
+    group = await ctx.db.group_to_dict(chat_id)
+    current = (group or {}).get("suspect_rules", "")
+    preview = current[:500] + ("..." if len(current) > 500 else "")
+    await query.edit_message_text(
+        i18n.PROMPT_RULES_SUSPECT.format(preview=preview or i18n.PROMPT_RULES_NONE),
+        reply_markup=await _back_kb(chat_id, query, ctx),
+    )
+
+
+async def _prompt_rules(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    await _show_rules_menu(query, ctx, chat_id, _extra, _context)
 
 
 async def _prompt_blacklist_keyword(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:

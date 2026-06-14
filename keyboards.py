@@ -62,6 +62,19 @@ def group_admin_panel(chat_id: int, group: dict, *, from_sa: bool = False) -> In
     return InlineKeyboardMarkup(rows)
 
 
+def rules_menu_keyboard(chat_id: int, *, from_sa: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(i18n.BTN_RULES_BAN, callback_data=_cb("rules_ban", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_RULES_SUSPECT, callback_data=_cb("rules_suspect", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("panel", chat_id))],
+    ]
+    if from_sa:
+        rows.append(
+            [InlineKeyboardButton(i18n.BTN_SA_GROUPS_BACK, callback_data=_cb("sa_grps", 0, "0"))],
+        )
+    return InlineKeyboardMarkup(rows)
+
+
 def strictness_keyboard(chat_id: int, current: str) -> InlineKeyboardMarkup:
     rows = []
     for level in ("low", "medium", "high"):

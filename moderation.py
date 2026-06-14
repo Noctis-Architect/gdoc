@@ -50,6 +50,7 @@ class ModerationEngine:
                 action_mode=cached.get("action_mode", "keep_alert"),
                 warning_threshold=cached.get("warning_threshold", 3),
                 custom_rules=cached.get("custom_rules", ""),
+                suspect_rules=cached.get("suspect_rules", ""),
             )
         group = await self.db.get_group(chat_id)
         if group:
@@ -64,6 +65,7 @@ class ModerationEngine:
                     "action_mode": group.action_mode,
                     "warning_threshold": group.warning_threshold,
                     "custom_rules": group.custom_rules,
+                    "suspect_rules": group.suspect_rules,
                 },
             )
         return group
@@ -120,6 +122,7 @@ class ModerationEngine:
         result: ClassificationResult = await self.ai.classify(
             message_text,
             group.custom_rules,
+            group.suspect_rules,
             group.strictness,
         )
 
@@ -136,13 +139,14 @@ class ModerationEngine:
             )
 
         delete_on_violation = group.action_mode == "delete_flag"
-        should_delete = result.classification == "VIOLATION" and delete_on_violation
-        if result.classification == "SUSPECT" and group.strictness == "high":
+        if result.classification == "VIOLATION":
             should_delete = delete_on_violation
-
-        should_warn = result.classification == "VIOLATION" or (
-            result.classification == "SUSPECT" and group.strictness in ("medium", "high")
-        )
+            should_warn = False
+            should_ban = True
+        else:
+            should_delete = delete_on_violation and group.strictness == "high"
+            should_warn = group.strictness in ("medium", "high")
+            should_ban = False
 
         return ModerationDecision(
             flagged=True,
@@ -151,7 +155,7 @@ class ModerationEngine:
             layer="ai",
             should_delete=should_delete,
             should_warn=should_warn,
-            should_ban=result.classification == "VIOLATION" and group.strictness == "high",
+            should_ban=should_ban,
         )
 
     async def evaluate(

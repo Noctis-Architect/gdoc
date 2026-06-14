@@ -188,7 +188,7 @@ async def _handle_pending_input(
     input_type = pending["type"]
     chat = update.effective_chat
 
-    if input_type in ("rules", "bl_keyword", "bl_regex", "bl_remove"):
+    if input_type in ("rules_ban", "rules_suspect", "bl_keyword", "bl_regex", "bl_remove"):
         target_chat_id = pending.get("chat_id")
         if target_chat_id and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
             if chat.id != target_chat_id:
@@ -212,11 +212,17 @@ async def _handle_pending_input(
 
     reply_chat_id = chat.id if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) else user_id
 
-    if input_type == "rules":
+    if input_type == "rules_ban":
         chat_id = pending["chat_id"]
         await ctx.db.update_group_field(chat_id, "custom_rules", text)
         await ctx.moderation.invalidate_group_cache(chat_id)
         await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_RULES_UPDATED)
+
+    elif input_type == "rules_suspect":
+        chat_id = pending["chat_id"]
+        await ctx.db.update_group_field(chat_id, "suspect_rules", text)
+        await ctx.moderation.invalidate_group_cache(chat_id)
+        await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_RULES_SUSPECT_UPDATED)
 
     elif input_type == "bl_keyword":
         chat_id = pending["chat_id"]

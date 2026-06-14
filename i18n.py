@@ -131,7 +131,9 @@ def format_group_panel_header(group: dict) -> str:
 
 # --- Inline keyboard buttons ---
 
-BTN_RULES = "📝 قوانین سفارشی"
+BTN_RULES = "📝 قوانین گروه"
+BTN_RULES_BAN = "🔨 قوانین بن مستقیم"
+BTN_RULES_SUSPECT = "🔍 قوانین مشکوک"
 BTN_STRICTNESS = "🎚 سطح سختی"
 BTN_ACTION = "⚡ عملکرد پیام مشکوک"
 BTN_THRESHOLD = "⚠️ آستانه اخطار"
@@ -186,7 +188,19 @@ PROMPT_STRICTNESS = "سطح سختی moderation را انتخاب کنید:"
 PROMPT_ACTION = "برخورد با پیام‌های مشکوک:\n_پیش‌فرض: پیام حذف نمی‌شود و فقط در پیوی ادمین بررسی می‌شود._"
 PROMPT_THRESHOLD = "حداکثر تعداد اخطار قبل از بن خودکار:"
 PROMPT_RULES = (
-    "قوانین سفارشی گروه را ارسال کنید.\n"
+    "نوع قوانین را انتخاب کنید:\n\n"
+    "🔨 **بن مستقیم** — نقض = تخلف و بن فوری\n"
+    "🔍 **مشکوک** — نقض = پیام مشکوک (اخطار بر اساس تنظیمات)"
+)
+PROMPT_RULES_BAN = (
+    "قوانین **بن مستقیم** را ارسال کنید.\n"
+    "نقض هر کدام = تخلف و بن فوری کاربر.\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید.\n\n"
+    "قوانین فعلی:\n{preview}"
+)
+PROMPT_RULES_SUSPECT = (
+    "قوانین **مشکوک** را ارسال کنید.\n"
+    "نقض هر کدام = پیام مشکوک (نه بن مستقیم).\n"
     "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید.\n\n"
     "قوانین فعلی:\n{preview}"
 )
@@ -467,7 +481,8 @@ MSG_SA_NO_GROUPS = "هنوز گروهی ثبت نشده."
 
 # --- Pending input confirmations ---
 
-MSG_RULES_UPDATED = "✅ قوانین سفارشی ذخیره شد."
+MSG_RULES_UPDATED = "✅ قوانین بن مستقیم ذخیره شد."
+MSG_RULES_SUSPECT_UPDATED = "✅ قوانین مشکوک ذخیره شد."
 MSG_KEYWORD_ADDED = "✅ کلمه اضافه شد: `{text}`"
 MSG_REGEX_ADDED = "✅ Regex اضافه شد: `{text}`"
 MSG_PATTERN_REMOVED = "✅ الگو حذف شد: `{text}`"
