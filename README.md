@@ -61,7 +61,7 @@ Non-interactive install via environment variables:
 curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
 sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" \
   USE_WEBHOOK="true" WEBHOOK_DOMAIN="bot.example.com" SSL_EMAIL="you@example.com" \
-  CF_API_TOKEN="..." bash /tmp/gdoc-install.sh
+  bash /tmp/gdoc-install.sh
 ```
 
 > **Note:** Use `sudo bash`, not `sudo curl`. Only the installer needs root.  
@@ -79,7 +79,7 @@ The interactive installer will ask for:
 
 1. **Telegram Bot Token** — from [@BotFather](https://t.me/BotFather)
 2. **Super Admin ID** — your numeric Telegram user ID (use [@userinfobot](https://t.me/userinfobot))
-3. **Domain & SSL** — webhook domain, Let's Encrypt email, and optional Cloudflare API token for automatic SSL
+3. **Domain & SSL** — webhook domain and Let's Encrypt email (free SSL via HTTP challenge)
 4. **Polling fallback** — set webhook to `false` if you have no public domain
 
 **Not asked during install:** AI provider, API key, base URL, or model — configure these from `/superadmin` in Telegram (super admin only).
@@ -326,7 +326,7 @@ sudo INSTALL_DIR=/home/gdoc/gdoc bash /tmp/gdoc-install.sh
 curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
 sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" \
   USE_WEBHOOK="true" WEBHOOK_DOMAIN="bot.example.com" SSL_EMAIL="you@example.com" \
-  CF_API_TOKEN="..." bash /tmp/gdoc-install.sh
+  bash /tmp/gdoc-install.sh
 ```
 
 > **نکته:** فقط `bash` را با sudo اجرا کنید، نه `curl` را.  
@@ -344,7 +344,7 @@ sudo bash install.sh
 
 1. **توکن ربات تلگرام** — از [@BotFather](https://t.me/BotFather)
 2. **شناسه عددی سوپرادمین** — ID عددی تلگرام شما (از [@userinfobot](https://t.me/userinfobot))
-3. **دامنه و SSL** — دامنه وب‌هوک، ایمیل Let's Encrypt، و در صورت نیاز توکن API کلادفلر برای SSL خودکار
+3. **دامنه و SSL** — دامنه وب‌هوک و ایمیل Let's Encrypt (SSL رایگان، بدون توکن Cloudflare)
 4. **Polling** — اگر دامنه عمومی ندارید، webhook را `false` بگذارید
 
 **در زمان نصب پرسیده نمی‌شود:** پرووایدر AI، کلید API، Base URL، مدل — فقط از `/superadmin` در تلگرام (فقط سوپرادمین).

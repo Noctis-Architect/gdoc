@@ -85,7 +85,6 @@ collect_config() {
     USE_WEBHOOK="${USE_WEBHOOK:-false}"
     WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN:-}"
     SSL_EMAIL="${SSL_EMAIL:-}"
-    CF_API_TOKEN="${CF_API_TOKEN:-}"
 
     if [[ -n "${BOT_TOKEN:-}" && -n "${SUPER_ADMIN_ID:-}" ]]; then
         log_info "تنظیمات از متغیرهای محیطی خوانده شد."
@@ -119,21 +118,14 @@ collect_config() {
     if [[ "${USE_WEBHOOK}" == "true" ]]; then
         prompt_value WEBHOOK_DOMAIN "دامنه وب‌هوک (مثال: bot.example.com)"
         prompt_value SSL_EMAIL "ایمیل برای گواهی SSL (Let's Encrypt)"
-        prompt_value USE_CLOUDFLARE "دامنه روی Cloudflare است؟ (true/false)" "true"
-        if [[ "${USE_CLOUDFLARE}" == "true" ]]; then
-            prompt_value CF_API_TOKEN "توکن API کلادفلر (دسترسی Zone:DNS:Edit)"
-            log_info "SSL با DNS challenge کلادفلر برای ${WEBHOOK_DOMAIN} صادر می‌شود."
-        else
-            CF_API_TOKEN=""
-            log_info "SSL با HTTP challenge برای ${WEBHOOK_DOMAIN} صادر می‌شود."
-            log_warn "رکورد A دامنه باید به IP همین سرور اشاره کند."
-        fi
         WEBHOOK_URL="https://${WEBHOOK_DOMAIN}"
+        log_info "SSL خودکار با Let's Encrypt (فقط دامنه + ایمیل لازم است)."
+        log_warn "قبل از ادامه: رکورد A دامنه باید به IP همین سرور اشاره کند."
+        log_warn "اگر Cloudflare دارید، موقتاً پروکسی (ابر نارنجی) را خاموش کنید."
     else
         WEBHOOK_DOMAIN=""
         WEBHOOK_URL=""
         SSL_EMAIL=""
-        CF_API_TOKEN=""
         log_warn "حالت Polling — برای production توصیه می‌شود دامنه فعال باشد."
     fi
 }
@@ -159,38 +151,8 @@ sync_install_dir() {
     fi
 }
 
-ensure_ssl_script() {
-    local dir="$1"
-    local ssl_script="${dir}/scripts/setup_webhook_ssl.sh"
-
-    if [[ -f "${ssl_script}" ]]; then
-        chmod +x "${ssl_script}" 2>/dev/null || true
-        return 0
-    fi
-
-    log_info "اسکریپت SSL یافت نشد — دانلود از گیت‌هاب..."
-    mkdir -p "${dir}/scripts"
-
-    if ! command -v curl >/dev/null 2>&1; then
-        log_error "curl برای دانلود اسکریپت SSL لازم است."
-        return 1
-    fi
-
-    if curl -fsSL \
-        "https://raw.githubusercontent.com/Noctis-Architect/gdoc/${GIT_BRANCH}/scripts/setup_webhook_ssl.sh" \
-        -o "${ssl_script}"; then
-        chmod +x "${ssl_script}"
-        log_info "اسکریپت SSL دانلود شد."
-        return 0
-    fi
-
-    log_error "دانلود اسکریپت SSL ناموفق بود: ${ssl_script}"
-    return 1
-}
-
 finalize_install_dir() {
     sync_install_dir "${INSTALL_DIR}"
-    ensure_ssl_script "${INSTALL_DIR}" || true
 }
 
 resolve_install_dir() {
@@ -342,20 +304,140 @@ EOF
     systemctl restart "${SERVICE_NAME}.service"
 }
 
+install_ssl_packages() {
+    log_info "نصب nginx و certbot..."
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -y
+        apt-get install -y nginx certbot python3-certbot-nginx
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y nginx certbot python3-certbot-nginx || dnf install -y nginx certbot
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y nginx certbot python3-certbot-nginx || yum install -y nginx certbot
+    else
+        log_error "مدیر بسته ناشناخته — nginx و certbot را دستی نصب کنید."
+        exit 1
+    fi
+}
+
+write_nginx_config() {
+    local domain="$1"
+    local local_port="$2"
+    local webhook_path="$3"
+    local ssl_cert="/etc/letsencrypt/live/${domain}/fullchain.pem"
+    local ssl_key="/etc/letsencrypt/live/${domain}/privkey.pem"
+    local site_file="/etc/nginx/sites-available/gdoc-${domain}"
+
+    if [[ -f "${ssl_cert}" ]]; then
+        cat > "${site_file}" <<EOF
+server {
+    listen 80;
+    server_name ${domain};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${domain};
+
+    ssl_certificate ${ssl_cert};
+    ssl_certificate_key ${ssl_key};
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    location ${webhook_path} {
+        proxy_pass http://127.0.0.1:${local_port}${webhook_path};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+    else
+        cat > "${site_file}" <<EOF
+server {
+    listen 80;
+    server_name ${domain};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location ${webhook_path} {
+        proxy_pass http://127.0.0.1:${local_port}${webhook_path};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+    fi
+
+    mkdir -p /etc/nginx/sites-enabled
+    ln -sf "${site_file}" "/etc/nginx/sites-enabled/gdoc-${domain}"
+    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+    nginx -t
+    systemctl enable nginx
+    systemctl restart nginx
+}
+
+obtain_ssl_certificate() {
+    local domain="$1"
+    local email="$2"
+
+    log_info "دریافت گواهی SSL برای ${domain} (Let's Encrypt HTTP)..."
+    certbot certonly \
+        --nginx \
+        -d "${domain}" \
+        --email "${email}" \
+        --agree-tos \
+        --non-interactive \
+        --no-eff-email
+}
+
+setup_ssl_renewal() {
+    systemctl enable certbot.timer 2>/dev/null || true
+    systemctl start certbot.timer 2>/dev/null || true
+
+    mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+    cat > /etc/letsencrypt/renewal-hooks/deploy/gdoc-nginx-reload.sh <<'HOOK'
+#!/bin/bash
+nginx -t && systemctl reload nginx
+HOOK
+    chmod +x /etc/letsencrypt/renewal-hooks/deploy/gdoc-nginx-reload.sh
+}
+
 setup_webhook_ssl() {
     local domain="$1"
     local email="$2"
-    local cf_token="${3:-}"
-    local ssl_script="${INSTALL_DIR}/scripts/setup_webhook_ssl.sh"
+    local local_port="8443"
+    local webhook_path="/webhook"
 
-    if ! ensure_ssl_script "${INSTALL_DIR}"; then
-        log_error "اسکریپت SSL در دسترس نیست. نصب را دوباره اجرا کنید یا دستی:"
-        log_error "  curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/scripts/setup_webhook_ssl.sh -o ${ssl_script}"
+    if [[ ! "${domain}" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]]; then
+        log_error "دامنه نامعتبر: ${domain}"
         exit 1
     fi
 
-    log_info "Setting up nginx + SSL for ${domain}..."
-    bash "${ssl_script}" "${domain}" "${email}" "${cf_token}" 8443 /webhook
+    log_info "راه‌اندازی nginx + SSL برای ${domain}..."
+    install_ssl_packages
+    write_nginx_config "${domain}" "${local_port}" "${webhook_path}"
+    obtain_ssl_certificate "${domain}" "${email}"
+    write_nginx_config "${domain}" "${local_port}" "${webhook_path}"
+    systemctl reload nginx
+    setup_ssl_renewal
+
+    log_info "SSL فعال شد: https://${domain}${webhook_path}"
 }
 
 print_summary() {
@@ -410,7 +492,7 @@ main() {
     write_env_file "${BOT_TOKEN}" "${SUPER_ADMIN_ID}" "${USE_WEBHOOK}" "${WEBHOOK_URL}"
 
     if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" && -n "${SSL_EMAIL}" ]]; then
-        setup_webhook_ssl "${WEBHOOK_DOMAIN}" "${SSL_EMAIL}" "${CF_API_TOKEN:-}"
+        setup_webhook_ssl "${WEBHOOK_DOMAIN}" "${SSL_EMAIL}"
     fi
 
     create_systemd_service
