@@ -14,6 +14,7 @@ from config import Config
 from context import BotContext
 import i18n
 from handlers.admin_utils import can_manage_group_fast, has_admin_access, is_protected_member
+from handlers.group_notifications import notify_group_ban, notify_group_warning
 from handlers.moderation_actions import ban_user_in_chat, increment_warning_cached, safe_delete_message
 from handlers.moderation_cmds import try_handle_admin_reply_command
 from webhook_manager import (
@@ -89,8 +90,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if decision.should_warn:
         warn_count, auto_banned = await increment_warning_cached(ctx, chat.id, user.id)
+        deleted = decision.should_delete
+        threshold = group.warning_threshold if group else 3
         if auto_banned:
             await ban_user_in_chat(context, chat.id, user.id, "Warning threshold exceeded")
+            reasons = await ctx.db.get_user_violation_reasons(chat.id, user.id)
+            await notify_group_ban(context, chat.id, user, warn_count, reasons)
             await _notify_cross_group(
                 ctx,
                 context.bot,
@@ -99,9 +104,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 username=user.username,
                 reason=f"بن پس از {warn_count} اخطار",
             )
+        else:
+            await notify_group_warning(
+                context,
+                chat.id,
+                user,
+                decision.reason,
+                warn_count,
+                threshold,
+                deleted,
+            )
 
     if decision.should_ban and not decision.should_warn:
         await ban_user_in_chat(context, chat.id, user.id, decision.reason)
+        reasons = [decision.reason] if decision.reason else []
+        await notify_group_ban(context, chat.id, user, 0, reasons)
         await _notify_cross_group(
             ctx,
             context.bot,

@@ -19,6 +19,11 @@ async def increment_warning_cached(ctx: BotContext, chat_id: int, user_id: int) 
     return count, auto_banned
 
 
+async def reset_warnings_cached(ctx: BotContext, chat_id: int, user_id: int) -> None:
+    await ctx.db.reset_warnings(chat_id, user_id)
+    await ctx.cache.set_warning_count(chat_id, user_id, 0)
+
+
 async def safe_delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int) -> bool:
     for attempt in range(3):
         try:
@@ -63,3 +68,36 @@ async def ban_user_in_chat(
             logger.error("Ban retry failed: %s", inner)
     except Exception as exc:
         logger.error("Ban failed for user %s in %s: %s", user_id, chat_id, exc)
+
+
+async def unban_user_in_chat(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user_id: int,
+) -> bool:
+    try:
+        await context.bot.unban_chat_member(
+            chat_id=chat_id,
+            user_id=user_id,
+            only_if_banned=True,
+        )
+        logger.info("Unbanned user %s in chat %s", user_id, chat_id)
+        return True
+    except Forbidden:
+        logger.warning("Missing permissions to unban user %s in %s", user_id, chat_id)
+        return False
+    except RetryAfter as exc:
+        await asyncio.sleep(exc.retry_after + 1)
+        try:
+            await context.bot.unban_chat_member(
+                chat_id=chat_id,
+                user_id=user_id,
+                only_if_banned=True,
+            )
+            return True
+        except Exception as inner:
+            logger.error("Unban retry failed: %s", inner)
+            return False
+    except Exception as exc:
+        logger.error("Unban failed for user %s in %s: %s", user_id, chat_id, exc)
+        return False

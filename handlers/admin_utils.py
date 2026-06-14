@@ -73,3 +73,11 @@ async def can_manage_group_fast(
         return True
     status = await get_member_status(bot, chat_id, user_id)
     return status in _ADMIN_STATUSES
+
+
+async def is_telegram_group_admin(bot: Bot, chat_id: int, user_id: int, db: Database) -> bool:
+    """True only for Telegram group admins/owner (super-admin bypass for remote management)."""
+    if await is_super_admin(db, user_id):
+        return True
+    status = await get_member_status(bot, chat_id, user_id)
+    return status in _ADMIN_STATUSES

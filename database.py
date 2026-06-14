@@ -838,6 +838,22 @@ class Database:
             (chat_id, limit),
         )
 
+    async def get_user_violation_reasons(
+        self,
+        chat_id: int,
+        user_id: int,
+        limit: int = 5,
+    ) -> list[str]:
+        rows = await self._fetchall(
+            """
+            SELECT reason FROM audit_logs
+            WHERE chat_id = ? AND user_id = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (chat_id, user_id, limit),
+        )
+        return [r["reason"] for r in rows if r.get("reason")]
+
     async def get_global_audit_logs(self, limit: int = 20) -> list[dict[str, Any]]:
         return await self._fetchall(
             "SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?",

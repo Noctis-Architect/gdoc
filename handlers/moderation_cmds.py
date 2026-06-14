@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 import i18n
 from context import BotContext
 from handlers.admin_utils import is_group_admin, is_protected_member
+from handlers.group_notifications import notify_group_ban, notify_group_warning
 from handlers.moderation_actions import ban_user_in_chat, increment_warning_cached, safe_delete_message
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,8 @@ async def try_handle_admin_reply_command(
     try:
         if cmd == "ban":
             await _cmd_ban(context, chat.id, target_user.id, target_msg.message_id)
+            reasons = ["بن دستی توسط ادمین"]
+            await notify_group_ban(context, chat.id, target_user, 0, reasons)
             result = i18n.MSG_MODCMD_BAN.format(user=target_label)
         elif cmd == "kick":
             await _cmd_kick(context, chat.id, target_user.id, target_msg.message_id)
@@ -89,10 +92,26 @@ async def try_handle_admin_reply_command(
             result = i18n.MSG_MODCMD_UNMUTE.format(user=target_label)
         elif cmd == "warn":
             count, auto_banned = await increment_warning_cached(ctx, chat.id, target_user.id)
+            group = await ctx.db.group_to_dict(chat.id)
+            threshold = (group or {}).get("warning_threshold", 3)
+            msg_text = target_msg.text or target_msg.caption or ""
             if auto_banned:
                 await ban_user_in_chat(context, chat.id, target_user.id, "Warning threshold exceeded")
+                reasons = await ctx.db.get_user_violation_reasons(chat.id, target_user.id)
+                if not reasons:
+                    reasons = ["اخطار دستی توسط ادمین"]
+                await notify_group_ban(context, chat.id, target_user, count, reasons)
                 result = i18n.MSG_MODCMD_WARN_BAN.format(user=target_label, count=count)
             else:
+                await notify_group_warning(
+                    context,
+                    chat.id,
+                    target_user,
+                    "اخطار دستی توسط ادمین",
+                    count,
+                    threshold,
+                    deleted=False,
+                )
                 result = i18n.MSG_MODCMD_WARN.format(user=target_label, count=count)
         elif cmd in ("del", "delete"):
             await safe_delete_message(context, chat.id, target_msg.message_id)

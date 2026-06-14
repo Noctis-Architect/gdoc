@@ -12,7 +12,12 @@ import i18n
 import keyboards
 from config import Config
 from context import BotContext
-from handlers.admin_utils import can_manage_group_fast, has_admin_access
+from handlers.admin_utils import can_manage_group_fast, has_admin_access, is_telegram_group_admin
+from handlers.moderation_actions import (
+    ban_user_in_chat,
+    reset_warnings_cached,
+    unban_user_in_chat,
+)
 from webhook_manager import (
     normalize_webhook_url,
     update_env_file,
@@ -30,6 +35,18 @@ async def _safe_edit(query, text: str, **kwargs) -> None:
             logger.warning("Could not edit callback message: %s", exc)
 
 
+async def _is_sa_remote(query, ctx: BotContext, user_id: int) -> bool:
+    """Super-admin managing a group from private chat."""
+    if not query.message or not query.message.chat:
+        return False
+    from telegram.constants import ChatType
+
+    return (
+        query.message.chat.type == ChatType.PRIVATE
+        and await ctx.db.is_super_admin(user_id)
+    )
+
+
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not query or not query.data or not update.effective_user:
@@ -40,6 +57,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     ctx: BotContext = context.bot_data["ctx"]
     user_id = update.effective_user.id
 
+    if action in ("mod_forgive", "mod_ban", "mod_unban"):
+        await _handle_mod_action(action, query, ctx, chat_id, extra, context)
+        return
+
     if action.startswith("sa_"):
         if not await ctx.db.is_super_admin(user_id):
             await query.edit_message_text(i18n.MSG_ACCESS_DENIED)
@@ -47,11 +68,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _handle_super_admin(action, query, ctx, context, extra)
         return
 
-    if chat_id and not await can_manage_group_fast(context.bot, chat_id, user_id, ctx.db):
+    is_sa_remote = await _is_sa_remote(query, ctx, user_id)
+
+    if chat_id and not is_sa_remote and not await can_manage_group_fast(
+        context.bot, chat_id, user_id, ctx.db,
+    ):
         await query.edit_message_text(i18n.MSG_NOT_GROUP_ADMIN)
         return
 
-    if chat_id and not await has_admin_access(ctx.db, user_id):
+    if chat_id and not is_sa_remote and not await has_admin_access(ctx.db, user_id):
         await query.edit_message_text(i18n.MSG_SUBSCRIPTION_EXPIRED, parse_mode="Markdown")
         return
 
@@ -78,14 +103,70 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await handler(query, ctx, chat_id, extra, context)
 
 
+async def _back_kb(chat_id: int, query, ctx: BotContext):
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    return keyboards.back_to_group_panel(chat_id, from_sa=from_sa)
+
+
+async def _handle_mod_action(
+    action: str,
+    query,
+    ctx: BotContext,
+    chat_id: int,
+    extra: str,
+    context,
+) -> None:
+    if not chat_id or not extra:
+        return
+
+    try:
+        target_user_id = int(extra)
+    except ValueError:
+        return
+
+    admin_id = query.from_user.id
+    if not await is_telegram_group_admin(context.bot, chat_id, admin_id, ctx.db):
+        try:
+            await query.message.reply_text(i18n.MSG_MOD_NOT_GROUP_ADMIN)
+        except BadRequest:
+            pass
+        return
+
+    if action == "mod_forgive":
+        await reset_warnings_cached(ctx, chat_id, target_user_id)
+        result = i18n.MSG_MOD_FORGIVEN.format(user=f"کاربر {target_user_id}")
+    elif action == "mod_ban":
+        await ban_user_in_chat(context, chat_id, target_user_id, "Banned by group admin")
+        result = i18n.MSG_MOD_BANNED.format(user=f"کاربر {target_user_id}")
+    elif action == "mod_unban":
+        ok = await unban_user_in_chat(context, chat_id, target_user_id)
+        if ok:
+            await reset_warnings_cached(ctx, chat_id, target_user_id)
+            result = i18n.MSG_MOD_UNBANNED.format(user=f"کاربر {target_user_id}")
+        else:
+            result = i18n.MSG_MOD_ALREADY_DONE
+    else:
+        return
+
+    try:
+        await query.edit_message_text(
+            f"{query.message.text}\n\n{result}",
+            reply_markup=None,
+        )
+    except BadRequest:
+        await query.message.reply_text(result)
+
+
 async def _show_group_panel(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
     group = await ctx.db.group_to_dict(chat_id)
     if not group:
         await query.edit_message_text(i18n.MSG_GROUP_NOT_FOUND)
         return
-    await query.edit_message_text(
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    await _safe_edit(
+        query,
         i18n.format_group_panel_header(group),
-        reply_markup=keyboards.group_admin_panel(chat_id, group),
+        reply_markup=keyboards.group_admin_panel(chat_id, group, from_sa=from_sa),
         parse_mode="Markdown",
     )
 
@@ -158,7 +239,7 @@ async def _prompt_rules(query, ctx: BotContext, chat_id: int, _extra: str, _cont
     preview = current[:500] + ("..." if len(current) > 500 else "")
     await query.edit_message_text(
         i18n.PROMPT_RULES.format(preview=preview or i18n.PROMPT_RULES_NONE),
-        reply_markup=keyboards.back_to_group_panel(chat_id),
+        reply_markup=await _back_kb(chat_id, query, ctx),
     )
 
 
@@ -166,7 +247,7 @@ async def _prompt_blacklist_keyword(query, ctx: BotContext, chat_id: int, _extra
     ctx.pending_inputs[query.from_user.id] = {"type": "bl_keyword", "chat_id": chat_id}
     await query.edit_message_text(
         i18n.PROMPT_BL_KEYWORD,
-        reply_markup=keyboards.back_to_group_panel(chat_id),
+        reply_markup=await _back_kb(chat_id, query, ctx),
     )
 
 
@@ -174,7 +255,7 @@ async def _prompt_blacklist_regex(query, ctx: BotContext, chat_id: int, _extra: 
     ctx.pending_inputs[query.from_user.id] = {"type": "bl_regex", "chat_id": chat_id}
     await query.edit_message_text(
         i18n.PROMPT_BL_REGEX,
-        reply_markup=keyboards.back_to_group_panel(chat_id),
+        reply_markup=await _back_kb(chat_id, query, ctx),
     )
 
 
@@ -182,7 +263,7 @@ async def _prompt_blacklist_remove(query, ctx: BotContext, chat_id: int, _extra:
     ctx.pending_inputs[query.from_user.id] = {"type": "bl_remove", "chat_id": chat_id}
     await query.edit_message_text(
         i18n.PROMPT_BL_REMOVE,
-        reply_markup=keyboards.back_to_group_panel(chat_id),
+        reply_markup=await _back_kb(chat_id, query, ctx),
     )
 
 
@@ -201,16 +282,19 @@ async def _show_blacklist(query, ctx: BotContext, chat_id: int, _extra: str, _co
 
 async def _show_audit(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
     logs = await ctx.db.get_audit_logs(chat_id, limit=10)
+    back = await _back_kb(chat_id, query, ctx)
     if not logs:
-        await query.edit_message_text(
+        await _safe_edit(
+            query,
             i18n.MSG_AUDIT_EMPTY,
-            reply_markup=keyboards.back_to_group_panel(chat_id),
+            reply_markup=back,
         )
         return
 
-    await query.edit_message_text(
+    await _safe_edit(
+        query,
         i18n.format_audit_log(logs)[:4000],
-        reply_markup=keyboards.back_to_group_panel(chat_id),
+        reply_markup=back,
         parse_mode="Markdown",
     )
 
@@ -221,9 +305,10 @@ async def _show_group_stats(query, ctx: BotContext, chat_id: int, _extra: str, _
         await query.edit_message_text(i18n.MSG_GROUP_NOT_FOUND)
         return
     stats = await ctx.db.get_group_message_stats(chat_id)
-    await query.edit_message_text(
+    await _safe_edit(
+        query,
         i18n.format_group_message_stats(group, stats),
-        reply_markup=keyboards.back_to_group_panel(chat_id),
+        reply_markup=await _back_kb(chat_id, query, ctx),
         parse_mode="Markdown",
     )
 
@@ -381,19 +466,14 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
         )
         return
 
-    if action == "sa_groups":
-        groups = await ctx.db.list_all_groups()
-        chat_ids = [g["chat_id"] for g in groups]
-        period_stats = await ctx.db.get_groups_message_stats_bulk(chat_ids)
-        for g in groups:
-            stats = period_stats.get(g["chat_id"], {"week": 0, "month": 0})
-            g["messages_week"] = stats["week"]
-            g["messages_month"] = stats["month"]
-        await query.edit_message_text(
-            i18n.format_all_groups(groups)[:4000],
-            reply_markup=keyboards.back_to_super_admin(),
-            parse_mode="Markdown",
-        )
+    if action == "sa_groups" or action == "sa_grps":
+        await _show_sa_groups_picker(query, ctx, extra)
+        return
+
+    if action == "sa_grp":
+        if not chat_id:
+            return
+        await _show_sa_group_panel(query, ctx, chat_id)
         return
 
     if action == "sa_apikey":
@@ -430,7 +510,8 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
 
     if action == "sa_audit":
         logs = await ctx.db.get_global_audit_logs(limit=15)
-        await query.edit_message_text(
+        await _safe_edit(
+            query,
             i18n.format_global_audit(logs)[:4000],
             reply_markup=keyboards.back_to_super_admin(),
             parse_mode="Markdown",
@@ -457,5 +538,40 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
     await query.edit_message_text(
         i18n.MSG_SUPER_PANEL,
         reply_markup=keyboards.super_admin_panel(),
+        parse_mode="Markdown",
+    )
+
+
+async def _show_sa_groups_picker(query, ctx: BotContext, extra: str) -> None:
+    groups = await ctx.db.list_all_groups()
+    if not groups:
+        await query.edit_message_text(
+            i18n.MSG_SA_NO_GROUPS,
+            reply_markup=keyboards.back_to_super_admin(),
+        )
+        return
+    try:
+        page = int(extra) if extra else 0
+    except ValueError:
+        page = 0
+    await query.edit_message_text(
+        i18n.MSG_SA_SELECT_GROUP,
+        reply_markup=keyboards.sa_groups_picker(groups, page=page),
+        parse_mode="Markdown",
+    )
+
+
+async def _show_sa_group_panel(query, ctx: BotContext, chat_id: int) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    if not group:
+        await query.edit_message_text(
+            i18n.MSG_GROUP_NOT_FOUND,
+            reply_markup=keyboards.back_to_super_admin(),
+        )
+        return
+    await _safe_edit(
+        query,
+        i18n.format_group_panel_header(group),
+        reply_markup=keyboards.group_admin_panel(chat_id, group, from_sa=True),
         parse_mode="Markdown",
     )

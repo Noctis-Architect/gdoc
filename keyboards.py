@@ -15,7 +15,7 @@ def _cb(action: str, chat_id: int = 0, extra: str = "") -> str:
     return f"{PREFIX}:{action}:{chat_id}"
 
 
-def group_admin_panel(chat_id: int, group: dict) -> InlineKeyboardMarkup:
+def group_admin_panel(chat_id: int, group: dict, *, from_sa: bool = False) -> InlineKeyboardMarkup:
     enabled = i18n.moderation_status(bool(group.get("moderation_enabled")))
     strictness = i18n.strictness_label(group.get("strictness", "medium"))
     action = group.get("action_mode", "delete_flag")
@@ -23,39 +23,42 @@ def group_admin_panel(chat_id: int, group: dict) -> InlineKeyboardMarkup:
     action_btn = action_label if len(action_label) <= 28 else action_label[:25] + "…"
     threshold = group.get("warning_threshold", 3)
 
-    return InlineKeyboardMarkup(
+    rows = [
+        [InlineKeyboardButton(i18n.BTN_RULES, callback_data=_cb("rules", chat_id))],
         [
-            [InlineKeyboardButton(i18n.BTN_RULES, callback_data=_cb("rules", chat_id))],
-            [
-                InlineKeyboardButton(
-                    f"{i18n.BTN_STRICTNESS}: {strictness}",
-                    callback_data=_cb("strictness", chat_id),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{i18n.BTN_ACTION}: {action_btn}",
-                    callback_data=_cb("action", chat_id),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{i18n.BTN_THRESHOLD}: {threshold}",
-                    callback_data=_cb("threshold", chat_id),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    f"{i18n.BTN_MODERATION} {enabled}",
-                    callback_data=_cb("toggle", chat_id),
-                ),
-            ],
-            [InlineKeyboardButton(i18n.BTN_BLACKLIST, callback_data=_cb("blacklist", chat_id))],
-            [InlineKeyboardButton(i18n.BTN_AUDIT, callback_data=_cb("audit", chat_id))],
-            [InlineKeyboardButton(i18n.BTN_STATS, callback_data=_cb("stats", chat_id))],
-            [InlineKeyboardButton(i18n.BTN_REFRESH, callback_data=_cb("panel", chat_id))],
+            InlineKeyboardButton(
+                f"{i18n.BTN_STRICTNESS}: {strictness}",
+                callback_data=_cb("strictness", chat_id),
+            ),
         ],
-    )
+        [
+            InlineKeyboardButton(
+                f"{i18n.BTN_ACTION}: {action_btn}",
+                callback_data=_cb("action", chat_id),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{i18n.BTN_THRESHOLD}: {threshold}",
+                callback_data=_cb("threshold", chat_id),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{i18n.BTN_MODERATION} {enabled}",
+                callback_data=_cb("toggle", chat_id),
+            ),
+        ],
+        [InlineKeyboardButton(i18n.BTN_BLACKLIST, callback_data=_cb("blacklist", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_AUDIT, callback_data=_cb("audit", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_STATS, callback_data=_cb("stats", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_REFRESH, callback_data=_cb("panel", chat_id))],
+    ]
+    if from_sa:
+        rows.append(
+            [InlineKeyboardButton(i18n.BTN_SA_GROUPS_BACK, callback_data=_cb("sa_grps", 0, "0"))],
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 def strictness_keyboard(chat_id: int, current: str) -> InlineKeyboardMarkup:
@@ -207,10 +210,79 @@ def back_to_super_admin() -> InlineKeyboardMarkup:
     )
 
 
-def back_to_group_panel(chat_id: int) -> InlineKeyboardMarkup:
+def back_to_group_panel(chat_id: int, *, from_sa: bool = False) -> InlineKeyboardMarkup:
+    if from_sa:
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_grp", chat_id))],
+                [InlineKeyboardButton(i18n.BTN_SA_GROUPS_BACK, callback_data=_cb("sa_grps", 0, "0"))],
+            ],
+        )
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("panel", chat_id))]],
     )
+
+
+def warning_action_keyboard(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    i18n.BTN_MOD_FORGIVE,
+                    callback_data=_cb("mod_forgive", chat_id, str(user_id)),
+                ),
+                InlineKeyboardButton(
+                    i18n.BTN_MOD_BAN,
+                    callback_data=_cb("mod_ban", chat_id, str(user_id)),
+                ),
+            ],
+        ],
+    )
+
+
+def ban_notice_keyboard(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    i18n.BTN_MOD_UNBAN,
+                    callback_data=_cb("mod_unban", chat_id, str(user_id)),
+                ),
+            ],
+        ],
+    )
+
+
+def sa_groups_picker(groups: list[dict], page: int = 0, page_size: int = 8) -> InlineKeyboardMarkup:
+    start = page * page_size
+    end = start + page_size
+    page_groups = groups[start:end]
+    rows = []
+    for g in page_groups:
+        title = g.get("title") or str(g["chat_id"])
+        label = title if len(title) <= 35 else title[:32] + "…"
+        auth = "✅" if g.get("is_authorized") else "🚫"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{auth} {label}",
+                    callback_data=_cb("sa_grp", g["chat_id"]),
+                ),
+            ],
+        )
+    nav = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton("◀️", callback_data=_cb("sa_grps", 0, str(page - 1))),
+        )
+    if end < len(groups):
+        nav.append(
+            InlineKeyboardButton("▶️", callback_data=_cb("sa_grps", 0, str(page + 1))),
+        )
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_panel"))])
+    return InlineKeyboardMarkup(rows)
 
 
 def parse_callback(data: str) -> tuple[str, int, str]:

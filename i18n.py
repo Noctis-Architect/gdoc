@@ -47,6 +47,15 @@ def layer_label(value: str) -> str:
     return LAYER_FA.get(value, value)
 
 
+def escape_md(text: str) -> str:
+    """Escape Telegram legacy Markdown special characters in user content."""
+    if not text:
+        return ""
+    for ch in ("\\", "_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def moderation_status(enabled: bool) -> str:
     return "✅ فعال" if enabled else "❌ غیرفعال"
 
@@ -60,7 +69,8 @@ def authorized_status(authorized: bool) -> str:
 MSG_START_SUPER = (
     "👋 به **gdoc** (دکتر گروه) خوش آمدید.\n"
     "شما مالک سیستم هستید.\n"
-    "برای پنل کنترل سراسری از /superadmin استفاده کنید.\n\n"
+    "برای پنل کنترل سراسری از /superadmin استفاده کنید.\n"
+    "از بخش **همه گروه‌ها** می‌توانید گروه را انتخاب و تنظیماتش را مدیریت کنید.\n\n"
     "⚙️ ابتدا از پنل، **تنظیمات AI** (پرووایدر، کلید API و مدل) را پیکربندی کنید."
 )
 
@@ -88,7 +98,7 @@ MSG_HELP = (
     "**دستورات gdoc**\n"
     "/start — پیام خوش‌آمد\n"
     "/panel — پنل تنظیمات گروه (داخل گروه)\n"
-    "/superadmin — پنل مالک سیستم\n"
+    "/superadmin — پنل مالک (چت خصوصی؛ انتخاب و مدیریت گروه‌ها)\n"
     "/help — راهنما\n\n"
     "**دستورات مدیریتی (ریپلای به پیام کاربر):**\n"
     "`ban` — بن + حذف پیام‌های ۴۸ ساعت اخیر\n"
@@ -150,6 +160,11 @@ BTN_SA_AUTH = "✅ مجاز کردن گروه"
 BTN_SA_BAN_GROUP = "🚫 مسدود کردن گروه"
 BTN_SA_BAN_USER = "🔨 بن کاربر/ادمین"
 BTN_SA_AUDIT = "📋 گزارش سراسری"
+BTN_SA_GROUPS_BACK = "⬅️ بازگشت به فهرست گروه‌ها"
+
+BTN_MOD_FORGIVE = "✅ بخشیدن (حذف اخطار)"
+BTN_MOD_BAN = "🔨 بن کردن"
+BTN_MOD_UNBAN = "🔓 آزاد کردن"
 
 BTN_WH_POLLING = "📡 حالت Polling (پیش‌فرض)"
 BTN_WH_MANUAL = "🔗 تغییر URL دستی"
@@ -215,15 +230,17 @@ MSG_AUDIT_EMPTY = "📋 هنوز پیام پرچم‌گذاری‌شده‌ای 
 def format_audit_log(entries: list[dict]) -> str:
     lines = ["📋 **گزارش اخیر تخلفات**\n"]
     for entry in entries:
-        user_label = entry.get("username") or str(entry.get("user_id"))
-        text_preview = (entry.get("message_text") or "")[:80]
+        user_label = escape_md(entry.get("username") or str(entry.get("user_id")))
+        text_preview = escape_md((entry.get("message_text") or "")[:80])
         cls = classification_label(str(entry.get("classification", "")))
         layer = layer_label(str(entry.get("layer", "")))
+        reason = escape_md(str(entry.get("reason") or ""))
+        action = escape_md(str(entry.get("action_taken") or ""))
         lines.append(
             f"• **{user_label}** — {cls}\n"
             f"  _{text_preview}_\n"
-            f"  دلیل: {entry.get('reason')}\n"
-            f"  لایه: {layer} | اقدام: {entry.get('action_taken')}\n",
+            f"  دلیل: {reason}\n"
+            f"  لایه: {layer} | اقدام: {action}\n",
         )
     return "\n".join(lines)
 
@@ -306,12 +323,59 @@ def format_global_audit(entries: list[dict]) -> str:
     lines = ["📋 **گزارش سراسری تخلفات**\n"]
     for entry in entries:
         cls = classification_label(str(entry.get("classification", "")))
+        preview = escape_md((entry.get("message_text") or "")[:60])
         lines.append(
             f"• گروه `{entry.get('chat_id')}` — "
             f"کاربر {entry.get('user_id')} — {cls}\n"
-            f"  {(entry.get('message_text') or '')[:60]}\n",
+            f"  {preview}\n",
         )
     return "\n".join(lines)
+
+
+def format_group_warning_notice(
+    user_name: str,
+    username: str | None,
+    reason: str,
+    warn_count: int,
+    threshold: int,
+    deleted: bool,
+) -> str:
+    uname = f"@{escape_md(username)}" if username else "ندارد"
+    delete_line = "پیام شما حذف شد." if deleted else "پیام شما نگه داشته شد."
+    return (
+        f"⚠️ **اخطار moderation**\n"
+        f"کاربر: {escape_md(user_name)} ({uname})\n"
+        f"{delete_line}\n"
+        f"دلیل: {escape_md(reason)}\n"
+        f"تعداد اخطار: **{warn_count}** از **{threshold}**\n\n"
+        f"_فقط ادمین‌های گروه می‌توانند بخشیدن یا بن کنند._"
+    )
+
+
+def format_group_ban_notice(
+    user_name: str,
+    username: str | None,
+    warn_count: int,
+    reasons: list[str],
+) -> str:
+    uname = f"@{escape_md(username)}" if username else "ندارد"
+    reason_lines = "\n".join(f"  • {escape_md(r)}" for r in reasons[:5]) or "  • آستانه اخطار"
+    return (
+        f"🔨 **کاربر بن شد**\n"
+        f"کاربر: {escape_md(user_name)} ({uname})\n"
+        f"پس از **{warn_count}** اخطار از گروه اخراج شد.\n\n"
+        f"**دلایل تخلفات:**\n{reason_lines}\n\n"
+        f"_فقط ادمین‌های گروه می‌توانند کاربر را آزاد کنند._"
+    )
+
+
+MSG_MOD_FORGIVEN = "✅ اخطارهای {user} توسط ادمین بخشیده شد."
+MSG_MOD_BANNED = "🔨 {user} توسط ادمین بن شد."
+MSG_MOD_UNBANNED = "🔓 {user} توسط ادمین آزاد شد."
+MSG_MOD_NOT_GROUP_ADMIN = "⛔ فقط ادمین‌های گروه می‌توانند این کار را انجام دهند."
+MSG_MOD_ALREADY_DONE = "این اقدام قبلاً انجام شده است."
+MSG_SA_SELECT_GROUP = "👥 **گروه را برای مدیریت انتخاب کنید:**"
+MSG_SA_NO_GROUPS = "هنوز گروهی ثبت نشده."
 
 
 # --- Pending input confirmations ---
