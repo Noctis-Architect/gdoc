@@ -11,6 +11,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    ChatMemberHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -116,7 +117,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("panel", panel_command))
     application.add_handler(CommandHandler("superadmin", superadmin_command))
     application.add_handler(CallbackQueryHandler(callback_router, pattern=r"^gdoc:"))
-    application.add_handler(MessageHandler(filters.StatusUpdate.MY_CHAT_MEMBER, handle_my_chat_member))
+    application.add_handler(
+        ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER),
+    )
     application.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS | filters.ChatType.PRIVATE,
