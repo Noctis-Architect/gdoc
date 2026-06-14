@@ -52,6 +52,7 @@ def group_admin_panel(chat_id: int, group: dict) -> InlineKeyboardMarkup:
             ],
             [InlineKeyboardButton(i18n.BTN_BLACKLIST, callback_data=_cb("blacklist", chat_id))],
             [InlineKeyboardButton(i18n.BTN_AUDIT, callback_data=_cb("audit", chat_id))],
+            [InlineKeyboardButton(i18n.BTN_STATS, callback_data=_cb("stats", chat_id))],
             [InlineKeyboardButton(i18n.BTN_REFRESH, callback_data=_cb("panel", chat_id))],
         ],
     )
@@ -116,6 +117,7 @@ def super_admin_panel() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(i18n.BTN_SA_WEBHOOK, callback_data=_cb("sa_webhook"))],
             [InlineKeyboardButton(i18n.BTN_SA_STATS, callback_data=_cb("sa_stats"))],
             [InlineKeyboardButton(i18n.BTN_SA_GROUPS, callback_data=_cb("sa_groups"))],
+            [InlineKeyboardButton(i18n.BTN_SA_ADMINS, callback_data=_cb("sa_admins"))],
             [InlineKeyboardButton(i18n.BTN_SA_AUTH, callback_data=_cb("sa_auth"))],
             [InlineKeyboardButton(i18n.BTN_SA_BAN_GROUP, callback_data=_cb("sa_ban_group"))],
             [InlineKeyboardButton(i18n.BTN_SA_BAN_USER, callback_data=_cb("sa_ban_user"))],
@@ -179,6 +181,15 @@ def webhook_panel() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton(i18n.BTN_WH_POLLING, callback_data=_cb("sa_wh_polling"))],
             [InlineKeyboardButton(i18n.BTN_WH_MANUAL, callback_data=_cb("sa_wh_manual"))],
+            [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_panel"))],
+        ],
+    )
+
+
+def admin_management_panel() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(i18n.BTN_SA_RENEW, callback_data=_cb("sa_renew"))],
             [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_panel"))],
         ],
     )

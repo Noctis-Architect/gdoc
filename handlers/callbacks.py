@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 import i18n
 import keyboards
 from config import Config
 from context import BotContext
-from handlers.commands import _user_can_manage_group
+from handlers.admin_utils import can_manage_group_fast, has_admin_access
 from webhook_manager import (
     normalize_webhook_url,
     update_env_file,
@@ -19,6 +20,14 @@ from webhook_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _safe_edit(query, text: str, **kwargs) -> None:
+    try:
+        await query.edit_message_text(text, **kwargs)
+    except BadRequest as exc:
+        if "message is not modified" not in str(exc).lower():
+            logger.warning("Could not edit callback message: %s", exc)
 
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -38,8 +47,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _handle_super_admin(action, query, ctx, context, extra)
         return
 
-    if chat_id and not await _user_can_manage_group(update, context, ctx.db):
+    if chat_id and not await can_manage_group_fast(context.bot, chat_id, user_id, ctx.db):
         await query.edit_message_text(i18n.MSG_NOT_GROUP_ADMIN)
+        return
+
+    if chat_id and not await has_admin_access(ctx.db, user_id):
+        await query.edit_message_text(i18n.MSG_SUBSCRIPTION_EXPIRED, parse_mode="Markdown")
         return
 
     handlers = {
@@ -57,6 +70,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "bl_add_rx": _prompt_blacklist_regex,
         "bl_remove": _prompt_blacklist_remove,
         "audit": _show_audit,
+        "stats": _show_group_stats,
     }
 
     handler = handlers.get(action)
@@ -148,19 +162,6 @@ async def _prompt_rules(query, ctx: BotContext, chat_id: int, _extra: str, _cont
     )
 
 
-async def _show_blacklist(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
-    patterns = await ctx.db.get_blacklist(chat_id)
-    lines = [
-        i18n.format_blacklist_item(p["pattern"], bool(p.get("is_regex")))
-        for p in patterns
-    ]
-    await query.edit_message_text(
-        i18n.format_blacklist_header(lines),
-        reply_markup=keyboards.blacklist_keyboard(chat_id),
-        parse_mode="Markdown",
-    )
-
-
 async def _prompt_blacklist_keyword(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
     ctx.pending_inputs[query.from_user.id] = {"type": "bl_keyword", "chat_id": chat_id}
     await query.edit_message_text(
@@ -185,6 +186,19 @@ async def _prompt_blacklist_remove(query, ctx: BotContext, chat_id: int, _extra:
     )
 
 
+async def _show_blacklist(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    patterns = await ctx.db.get_blacklist(chat_id)
+    lines = [
+        i18n.format_blacklist_item(p["pattern"], bool(p.get("is_regex")))
+        for p in patterns
+    ]
+    await query.edit_message_text(
+        i18n.format_blacklist_header(lines),
+        reply_markup=keyboards.blacklist_keyboard(chat_id),
+        parse_mode="Markdown",
+    )
+
+
 async def _show_audit(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
     logs = await ctx.db.get_audit_logs(chat_id, limit=10)
     if not logs:
@@ -196,6 +210,19 @@ async def _show_audit(query, ctx: BotContext, chat_id: int, _extra: str, _contex
 
     await query.edit_message_text(
         i18n.format_audit_log(logs)[:4000],
+        reply_markup=keyboards.back_to_group_panel(chat_id),
+        parse_mode="Markdown",
+    )
+
+
+async def _show_group_stats(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    if not group:
+        await query.edit_message_text(i18n.MSG_GROUP_NOT_FOUND)
+        return
+    stats = await ctx.db.get_group_message_stats(chat_id)
+    await query.edit_message_text(
+        i18n.format_group_message_stats(group, stats),
         reply_markup=keyboards.back_to_group_panel(chat_id),
         parse_mode="Markdown",
     )
@@ -356,6 +383,12 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
 
     if action == "sa_groups":
         groups = await ctx.db.list_all_groups()
+        chat_ids = [g["chat_id"] for g in groups]
+        period_stats = await ctx.db.get_groups_message_stats_bulk(chat_ids)
+        for g in groups:
+            stats = period_stats.get(g["chat_id"], {"week": 0, "month": 0})
+            g["messages_week"] = stats["week"]
+            g["messages_month"] = stats["month"]
         await query.edit_message_text(
             i18n.format_all_groups(groups)[:4000],
             reply_markup=keyboards.back_to_super_admin(),
@@ -401,6 +434,23 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
             i18n.format_global_audit(logs)[:4000],
             reply_markup=keyboards.back_to_super_admin(),
             parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_admins":
+        admins = await ctx.db.list_registered_admins()
+        await query.edit_message_text(
+            i18n.format_registered_admins(admins)[:4000],
+            reply_markup=keyboards.admin_management_panel(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_renew":
+        ctx.pending_inputs[user_id] = {"type": "sa_renew"}
+        await query.edit_message_text(
+            i18n.PROMPT_SA_RENEW,
+            reply_markup=keyboards.back_to_super_admin(),
         )
         return
 

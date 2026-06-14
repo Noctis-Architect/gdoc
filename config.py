@@ -53,6 +53,10 @@ class Config:
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
+    OFFICIAL_BOT_USERNAME: str = os.getenv("OFFICIAL_BOT_USERNAME", "g_docbot")
+    OWNER_USERNAME: str = os.getenv("OWNER_USERNAME", "mr_noctis")
+    ADMIN_TRIAL_DAYS: int = int(os.getenv("ADMIN_TRIAL_DAYS", "30"))
+
     STRICTNESS_LEVELS = ("low", "medium", "high")
     ACTION_MODES = ("delete_flag", "keep_alert")
     CLASSIFICATIONS = ("SAFE", "SUSPECT", "VIOLATION")

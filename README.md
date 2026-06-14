@@ -259,6 +259,27 @@ See repository for license details.
 
 ---
 
+## Terms of Use
+
+**Official bot:** The only authorized production instance of gdoc is [@g_docbot](https://t.me/g_docbot) on Telegram. Any other bot or deployment that sells access, resells the service, or uses this software for commercial gain without explicit permission from the owner is **not permitted**.
+
+**Personal use:** You may install and use this software for **personal, non-commercial** purposes (your own groups, learning, self-hosting).
+
+**Commercial use:** Selling the bot, offering it as a paid service, or monetizing deployments based on this codebase is allowed **only** through the official [@g_docbot](https://t.me/g_docbot) service operated by the project owner.
+
+**Subscriptions & limits**
+
+| Role | Access |
+|------|--------|
+| **Super admin** (owner) | Unlimited — no expiry |
+| **Group admins** | **30 days free** from first `/start`, then account is **deactivated** until renewed |
+
+When a group admin's trial expires, they lose access to `/panel` and admin features. To renew, contact [@mr_noctis](https://t.me/mr_noctis) on Telegram.
+
+**Usage billing:** Message counts are tracked **per group** (7-day, 30-day, and all-time totals). Super admin and group admins can view these stats in the bot panel; pricing is based on processed message volume.
+
+---
+
 <br>
 
 ---
@@ -490,3 +511,24 @@ gdoc/
 ├── requirements.txt
 └── .env.example
 ```
+
+---
+
+## شرایط استفاده
+
+**ربات رسمی:** تنها نسخه رسمی و مجاز gdoc در تلگرام، ربات [@g_docbot](https://t.me/g_docbot) است. هیچ ربات یا استقرار دیگری حق **فروش دسترسی**، **فروش مجدد سرویس**، یا **استفاده اقتصادی/تجاری** از این نرم‌افزار بدون اجازه صریح مالک را ندارد.
+
+**استفاده شخصی:** هر کس می‌تواند این نرم‌افزار را برای **استفاده شخصی و غیرتجاری** (گروه‌های خود، یادگیری، self-host) نصب و استفاده کند.
+
+**استفاده تجاری:** فروش ربات، ارائه به‌صورت سرویس پولی، یا کسب درآمد از استقرارهای مبتنی بر این کدبیس، **فقط** از طریق سرویس رسمی [@g_docbot](https://t.me/g_docbot) که توسط مالک پروژه اداره می‌شود مجاز است.
+
+**اشتراک و محدودیت‌ها**
+
+| نقش | دسترسی |
+|-----|--------|
+| **سوپرادمین (مالک)** | نامحدود — بدون انقضا |
+| **ادمین‌های گروه** | **۳۰ روز رایگان** از اولین `/start`، سپس حساب **غیرفعال** تا زمان تمدید |
+
+پس از پایان دوره آزمایشی، ادمین گروه به `/panel` و امکانات مدیریتی دسترسی ندارد. برای تمدید با [@mr_noctis](https://t.me/mr_noctis) در تلگرام تماس بگیرید.
+
+**محاسبه هزینه:** تعداد پیام‌های پردازش‌شده **به‌ازای هر گروه** ذخیره می‌شود (۷ روز، ۳۰ روز، و کل). سوپرادمین و ادمین همان گروه می‌توانند این آمار را در پنل ربات ببینند؛ هزینه سرویس بر اساس حجم پیام محاسبه می‌شود.

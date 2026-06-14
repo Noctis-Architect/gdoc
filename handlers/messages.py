@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Optional
 
 from telegram import Update
-from telegram.constants import ChatMemberStatus, ChatType
-from telegram.error import BadRequest, Forbidden, RetryAfter, TimedOut
+from telegram.constants import ChatType
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import ContextTypes
 
 from config import Config
 from context import BotContext
 import i18n
+from handlers.admin_utils import can_manage_group_fast, has_admin_access, is_protected_member
+from handlers.moderation_actions import ban_user_in_chat, increment_warning_cached, safe_delete_message
+from handlers.moderation_cmds import try_handle_admin_reply_command
 from webhook_manager import (
     normalize_webhook_url,
     update_env_file,
@@ -31,9 +33,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     chat = update.effective_chat
 
-    if user.id in ctx.pending_inputs and chat.type == ChatType.PRIVATE:
-        await _handle_pending_input(update, context, ctx)
-        return
+    if user.id in ctx.pending_inputs:
+        pending = ctx.pending_inputs.get(user.id)
+        chat_id = pending.get("chat_id") if pending else None
+        can_submit = chat.type == ChatType.PRIVATE
+        if not can_submit and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+            can_submit = chat_id == chat.id and await can_manage_group_fast(
+                context.bot, chat.id, user.id, ctx.db,
+            )
+        if can_submit:
+            await _handle_pending_input(update, context, ctx)
+            return
 
     if chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP):
         return
@@ -41,8 +51,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if update.message.new_chat_members or update.message.left_chat_member:
         return
 
+    if await try_handle_admin_reply_command(update, context, ctx):
+        return
+
     if await ctx.db.is_globally_banned(user.id):
-        await _safe_delete_message(context, chat.id, update.message.message_id)
+        await safe_delete_message(context, chat.id, update.message.message_id)
+        return
+
+    if await is_protected_member(context.bot, chat.id, user.id, ctx.db):
         return
 
     await ctx.db.upsert_user(user.id, user.username, user.first_name)
@@ -72,9 +88,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     if decision.should_warn:
-        warn_count, auto_banned = await _increment_warning_cached(ctx, chat.id, user.id)
+        warn_count, auto_banned = await increment_warning_cached(ctx, chat.id, user.id)
         if auto_banned:
-            await _ban_user_in_chat(context, chat.id, user.id, "Warning threshold exceeded")
+            await ban_user_in_chat(context, chat.id, user.id, "Warning threshold exceeded")
             await _notify_cross_group(
                 ctx,
                 context.bot,
@@ -85,7 +101,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
 
     if decision.should_ban and not decision.should_warn:
-        await _ban_user_in_chat(context, chat.id, user.id, decision.reason)
+        await ban_user_in_chat(context, chat.id, user.id, decision.reason)
         await _notify_cross_group(
             ctx,
             context.bot,
@@ -108,48 +124,68 @@ async def _handle_pending_input(
 
     text = update.message.text.strip()
     input_type = pending["type"]
+    chat = update.effective_chat
+
+    if input_type in ("rules", "bl_keyword", "bl_regex", "bl_remove"):
+        target_chat_id = pending.get("chat_id")
+        if target_chat_id and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
+            if chat.id != target_chat_id:
+                await _reply_input_result(
+                    context, user_id, chat.id, i18n.MSG_PENDING_WRONG_GROUP,
+                )
+                return
+            if not await can_manage_group_fast(context.bot, chat.id, user_id, ctx.db):
+                await _reply_input_result(context, user_id, chat.id, i18n.MSG_NOT_GROUP_ADMIN)
+                return
+            if not await has_admin_access(ctx.db, user_id):
+                await _reply_input_result(
+                    context, user_id, chat.id, i18n.MSG_SUBSCRIPTION_EXPIRED,
+                )
+                return
 
     try:
         await update.message.delete()
     except (BadRequest, Forbidden):
         pass
 
-    async def reply(msg: str, parse_mode: str = "") -> None:
-        kwargs = {"chat_id": user_id, "text": msg}
-        if parse_mode:
-            kwargs["parse_mode"] = parse_mode
-        await context.bot.send_message(**kwargs)
+    reply_chat_id = chat.id if chat.type in (ChatType.GROUP, ChatType.SUPERGROUP) else user_id
 
     if input_type == "rules":
         chat_id = pending["chat_id"]
         await ctx.db.update_group_field(chat_id, "custom_rules", text)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await reply(i18n.MSG_RULES_UPDATED)
+        await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_RULES_UPDATED)
 
     elif input_type == "bl_keyword":
         chat_id = pending["chat_id"]
         await ctx.db.add_blacklist_pattern(chat_id, text, is_regex=False)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await reply(i18n.MSG_KEYWORD_ADDED.format(text=text), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_KEYWORD_ADDED.format(text=text),
+        )
 
     elif input_type == "bl_regex":
         chat_id = pending["chat_id"]
         await ctx.db.add_blacklist_pattern(chat_id, text, is_regex=True)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await reply(i18n.MSG_REGEX_ADDED.format(text=text), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_REGEX_ADDED.format(text=text),
+        )
 
     elif input_type == "bl_remove":
         chat_id = pending["chat_id"]
         await ctx.db.remove_blacklist_pattern(chat_id, text)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await reply(i18n.MSG_PATTERN_REMOVED.format(text=text), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_PATTERN_REMOVED.format(text=text),
+        )
 
     elif input_type == "sa_apikey":
         if not await ctx.db.is_super_admin(user_id):
             return
         await ctx.db.set_ai_api_key(text)
         await ctx.refresh_ai_config()
-        await reply(i18n.MSG_APIKEY_UPDATED)
+        await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_APIKEY_UPDATED)
 
     elif input_type == "sa_baseurl":
         if not await ctx.db.is_super_admin(user_id):
@@ -157,19 +193,21 @@ async def _handle_pending_input(
         url = text.rstrip("/")
         await ctx.db.set_ai_base_url(url)
         await ctx.refresh_ai_config()
-        await reply(i18n.MSG_BASEURL_UPDATED.format(url=url), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_BASEURL_UPDATED.format(url=url),
+        )
 
     elif input_type == "sa_webhook_url":
         if not await ctx.db.is_super_admin(user_id):
             return
         url = normalize_webhook_url(text)
         if not validate_webhook_url(url):
-            await reply(i18n.MSG_WEBHOOK_INVALID_URL)
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_WEBHOOK_INVALID_URL)
             return
         await ctx.db.set_use_webhook(True)
         await ctx.db.set_webhook_url(url)
         update_env_file(Config.ENV_FILE, {"USE_WEBHOOK": "true", "WEBHOOK_URL": url})
-        await reply(i18n.MSG_WEBHOOK_URL_SAVED, "Markdown")
+        await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_WEBHOOK_URL_SAVED)
 
     elif input_type == "sa_auth":
         if not await ctx.db.is_super_admin(user_id):
@@ -177,11 +215,13 @@ async def _handle_pending_input(
         try:
             chat_id = int(text)
         except ValueError:
-            await reply(i18n.MSG_INVALID_CHAT_ID)
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_INVALID_CHAT_ID)
             return
         await ctx.db.set_group_authorized(chat_id, True)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await reply(i18n.MSG_GROUP_AUTHORIZED.format(chat_id=chat_id), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_GROUP_AUTHORIZED.format(chat_id=chat_id),
+        )
 
     elif input_type == "sa_ban_group":
         if not await ctx.db.is_super_admin(user_id):
@@ -189,11 +229,13 @@ async def _handle_pending_input(
         try:
             chat_id = int(text)
         except ValueError:
-            await reply(i18n.MSG_INVALID_CHAT_ID)
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_INVALID_CHAT_ID)
             return
         await ctx.db.set_group_authorized(chat_id, False)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await reply(i18n.MSG_GROUP_BANNED.format(chat_id=chat_id), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_GROUP_BANNED.format(chat_id=chat_id),
+        )
 
     elif input_type == "sa_ban_user":
         if not await ctx.db.is_super_admin(user_id):
@@ -201,10 +243,52 @@ async def _handle_pending_input(
         try:
             target_id = int(text)
         except ValueError:
-            await reply(i18n.MSG_INVALID_USER_ID)
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_INVALID_USER_ID)
             return
         await ctx.db.set_global_ban(target_id, True)
-        await reply(i18n.MSG_USER_BANNED.format(user_id=target_id), "Markdown")
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_USER_BANNED.format(user_id=target_id),
+        )
+
+    elif input_type == "sa_renew":
+        if not await ctx.db.is_super_admin(user_id):
+            return
+        try:
+            target_id = int(text)
+        except ValueError:
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_INVALID_USER_ID)
+            return
+        new_expires = await ctx.db.extend_admin_subscription(target_id)
+        await _reply_input_result(
+            context,
+            user_id,
+            reply_chat_id,
+            i18n.MSG_ADMIN_RENEWED.format(
+                user_id=target_id,
+                expires=new_expires.strftime("%Y-%m-%d"),
+                days=Config.ADMIN_TRIAL_DAYS,
+            ),
+        )
+
+
+async def _reply_input_result(
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    chat_id: int,
+    msg: str,
+) -> None:
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=msg)
+    except Forbidden:
+        if chat_id != user_id:
+            try:
+                await context.bot.send_message(chat_id=user_id, text=msg)
+            except Forbidden:
+                logger.warning("Could not confirm pending input to user %s", user_id)
+        else:
+            logger.warning("User %s has not started the bot in private chat", user_id)
+    except BadRequest as exc:
+        logger.warning("Could not send pending input confirmation: %s", exc)
 
 
 async def _apply_moderation_action(
@@ -218,7 +302,7 @@ async def _apply_moderation_action(
     actions = []
 
     if decision.should_delete:
-        deleted = await _safe_delete_message(
+        deleted = await safe_delete_message(
             context,
             update.effective_chat.id,
             update.message.message_id,
@@ -245,48 +329,6 @@ async def _apply_moderation_action(
         actions.append("ban_requested")
 
     return ",".join(actions)
-
-
-async def _increment_warning_cached(ctx: BotContext, chat_id: int, user_id: int) -> tuple[int, bool]:
-    count, auto_banned = await ctx.db.increment_warning(chat_id, user_id)
-    await ctx.cache.set_warning_count(chat_id, user_id, count)
-    return count, auto_banned
-
-
-async def _safe_delete_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int) -> bool:
-    for attempt in range(3):
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-            return True
-        except RetryAfter as exc:
-            await asyncio.sleep(exc.retry_after + 1)
-        except (BadRequest, Forbidden) as exc:
-            logger.warning("Could not delete message %s in %s: %s", message_id, chat_id, exc)
-            return False
-        except TimedOut:
-            await asyncio.sleep(1)
-    return False
-
-
-async def _ban_user_in_chat(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    user_id: int,
-    reason: str,
-) -> None:
-    try:
-        await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-        logger.info("Banned user %s in chat %s: %s", user_id, chat_id, reason)
-    except Forbidden:
-        logger.warning("Missing permissions to ban user %s in %s", user_id, chat_id)
-    except RetryAfter as exc:
-        await asyncio.sleep(exc.retry_after + 1)
-        try:
-            await context.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-        except Exception as inner:
-            logger.error("Ban retry failed: %s", inner)
-    except Exception as exc:
-        logger.error("Ban failed for user %s in %s: %s", user_id, chat_id, exc)
 
 
 async def _resolve_admin_ids(ctx: BotContext, chat_id: int, bot) -> list[int]:
@@ -389,6 +431,8 @@ async def _notify_cross_group(
 async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.my_chat_member or not update.effective_chat:
         return
+
+    from telegram.constants import ChatMemberStatus
 
     ctx: BotContext = context.bot_data["ctx"]
     chat = update.effective_chat

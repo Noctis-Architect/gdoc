@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from ai import AIClassifier
+from config import Config
 
 STRICTNESS_FA = {
     "low": "کم",
@@ -64,7 +67,15 @@ MSG_START_SUPER = (
 MSG_START_USER = (
     "👋 به **gdoc** (دکتر گروه) خوش آمدید.\n\n"
     "مرا به گروه اضافه کنید، به **ادمین** ارتقا دهید، "
-    "سپس در گروه دستور /panel را بزنید."
+    "سپس در گروه دستور /panel را بزنید.\n\n"
+    f"🎁 **{Config.ADMIN_TRIAL_DAYS} روز** استفاده رایگان برای ادمین‌های گروه.\n"
+    f"ربات رسمی: [@{Config.OFFICIAL_BOT_USERNAME}](https://t.me/{Config.OFFICIAL_BOT_USERNAME})"
+)
+
+MSG_SUBSCRIPTION_EXPIRED = (
+    "⏳ **دوره استفاده شما به پایان رسیده است.**\n\n"
+    f"برای تمدید حساب با [@{Config.OWNER_USERNAME}](https://t.me/{Config.OWNER_USERNAME}) "
+    "در تلگرام تماس بگیرید."
 )
 
 MSG_PANEL_PRIVATE = "دستور /panel را داخل گروهی که ربات ادمین است ارسال کنید."
@@ -78,7 +89,15 @@ MSG_HELP = (
     "/start — پیام خوش‌آمد\n"
     "/panel — پنل تنظیمات گروه (داخل گروه)\n"
     "/superadmin — پنل مالک سیستم\n"
-    "/help — راهنما"
+    "/help — راهنما\n\n"
+    "**دستورات مدیریتی (ریپلای به پیام کاربر):**\n"
+    "`ban` — بن + حذف پیام‌های ۴۸ ساعت اخیر\n"
+    "`kick` — اخراج از گروه\n"
+    "`mute` — سکوت کاربر\n"
+    "`unmute` — لغو سکوت\n"
+    "`warn` — ثبت اخطار\n"
+    "`del` — حذف پیام\n"
+    "`purge` — حذف پیام‌ها + اخراج موقت"
 )
 
 MSG_SUPER_PANEL = "🛡 **پنل کنترل مالک — gdoc**"
@@ -109,6 +128,7 @@ BTN_THRESHOLD = "⚠️ آستانه اخطار"
 BTN_MODERATION = "🤖 moderation"
 BTN_BLACKLIST = "🚫 لیست سیاه"
 BTN_AUDIT = "📋 گزارش تخلفات"
+BTN_STATS = "📊 آمار پیام‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
 BTN_BACK = "⬅️ بازگشت"
 
@@ -118,6 +138,8 @@ BTN_BL_REMOVE = "➖ حذف الگو"
 
 BTN_SA_STATS = "📊 آمار سراسری"
 BTN_SA_GROUPS = "👥 همه گروه‌ها"
+BTN_SA_ADMINS = "👤 مدیریت ادمین‌ها"
+BTN_SA_RENEW = "🔄 تمدید اشتراک ادمین"
 BTN_SA_AI = "🤖 تنظیمات AI"
 BTN_SA_WEBHOOK = "🌐 Webhook / SSL"
 BTN_SA_APIKEY = "🔑 کلید API"
@@ -142,13 +164,23 @@ PROMPT_STRICTNESS = "سطح سختی moderation را انتخاب کنید:"
 PROMPT_ACTION = "برخورد با پیام‌های مشکوک:"
 PROMPT_THRESHOLD = "حداکثر تعداد اخطار قبل از بن خودکار:"
 PROMPT_RULES = (
-    "قوانین سفارشی گروه را به‌صورت یک پیام متنی ارسال کنید.\n\n"
+    "قوانین سفارشی گروه را ارسال کنید.\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید.\n\n"
     "قوانین فعلی:\n{preview}"
 )
 PROMPT_RULES_NONE = "(تعریف نشده)"
-PROMPT_BL_KEYWORD = "کلمه یا عبارت را برای لیست سیاه ارسال کنید (بدون حساسیت به حروف)."
-PROMPT_BL_REGEX = "الگوی Regex را برای لیست سیاه ارسال کنید."
-PROMPT_BL_REMOVE = "متن دقیق الگویی که می‌خواهید حذف شود را ارسال کنید."
+PROMPT_BL_KEYWORD = (
+    "کلمه یا عبارت را برای لیست سیاه ارسال کنید (بدون حساسیت به حروف).\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
+)
+PROMPT_BL_REGEX = (
+    "الگوی Regex را برای لیست سیاه ارسال کنید.\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
+)
+PROMPT_BL_REMOVE = (
+    "متن دقیق الگویی که می‌خواهید حذف شود را ارسال کنید.\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
+)
 
 PROMPT_SA_APIKEY = "کلید API پرووایدر را به‌صورت پیام متنی ارسال کنید."
 PROMPT_SA_BASEURL = (
@@ -161,6 +193,10 @@ PROMPT_SA_WEBHOOK_URL = "آدرس عمومی HTTPS وب‌هوک را ارسال
 PROMPT_SA_AUTH = "شناسه عددی گروه را برای مجاز کردن ارسال کنید (مثلاً -1001234567890)."
 PROMPT_SA_BAN_GROUP = "شناسه عددی گروه را برای مسدود کردن ارسال کنید."
 PROMPT_SA_BAN_USER = "شناسه عددی کاربر تلگرام را برای بن سراسری ارسال کنید."
+PROMPT_SA_RENEW = (
+    "شناسه عددی ادمینی که می‌خواهید اشتراکش را تمدید کنید ارسال کنید.\n"
+    f"({Config.ADMIN_TRIAL_DAYS} روز به اشتراک فعلی اضافه می‌شود.)"
+)
 
 # --- Blacklist / audit ---
 
@@ -194,7 +230,10 @@ def format_audit_log(entries: list[dict]) -> str:
 
 def format_global_stats(stats: dict) -> str:
     groups_list = "\n".join(
-        f"• {g.get('title', g['chat_id'])} ({g.get('messages_processed', 0)} پیام)"
+        f"• {g.get('title', g['chat_id'])} — "
+        f"هفته: {g.get('messages_week', 0)} | "
+        f"ماه: {g.get('messages_month', 0)} | "
+        f"کل: {g.get('messages_processed', 0)}"
         for g in stats.get("groups", [])[:15]
     ) or "_گروه فعالی وجود ندارد_"
     return (
@@ -202,7 +241,7 @@ def format_global_stats(stats: dict) -> str:
         f"گروه‌های فعال: **{stats['active_groups']}**\n"
         f"کل پیام‌های پردازش‌شده: **{stats['total_messages']}**\n"
         f"ادمین‌های ثبت‌شده: **{stats['active_admins']}**\n\n"
-        f"**گروه‌ها:**\n{groups_list}"
+        f"**گروه‌ها (هفته / ماه / کل):**\n{groups_list}"
     )
 
 
@@ -211,8 +250,52 @@ def format_all_groups(groups: list[dict]) -> str:
     for g in groups[:25]:
         auth = "✅" if g.get("is_authorized") else "🚫"
         lines.append(
-            f"{auth} `{g['chat_id']}` — {g.get('title', 'نامشخص')} "
-            f"({g.get('messages_processed', 0)} پیام)",
+            f"{auth} `{g['chat_id']}` — {g.get('title', 'نامشخص')}\n"
+            f"  هفته: {g.get('messages_week', 0)} | "
+            f"ماه: {g.get('messages_month', 0)} | "
+            f"کل: {g.get('messages_processed', 0)}",
+        )
+    return "\n".join(lines)
+
+
+def format_group_message_stats(group: dict, stats: dict) -> str:
+    title = group.get("title") or "گروه"
+    return (
+        f"📊 **آمار پیام‌های گروه**\n"
+        f"📌 {title}\n\n"
+        f"۷ روز اخیر: **{stats['week']}** پیام\n"
+        f"۳۰ روز اخیر: **{stats['month']}** پیام\n"
+        f"کل پردازش‌شده: **{stats['total']}** پیام\n\n"
+        "_هزینه سرویس بر اساس تعداد پیام‌های پردازش‌شده محاسبه می‌شود._"
+    )
+
+
+def format_registered_admins(admins: list[dict]) -> str:
+    if not admins:
+        return "👤 **مدیریت ادمین‌ها**\n\n_هنوز ادمینی ثبت نشده._"
+    lines = ["👤 **مدیریت ادمین‌ها**\n"]
+    now = datetime.now(timezone.utc)
+    for admin in admins[:30]:
+        expires_label = "—"
+        if admin.get("is_super_admin"):
+            status = "♾️ سوپرادمین"
+        else:
+            expires_raw = admin.get("subscription_expires_at")
+            if expires_raw:
+                expires = datetime.fromisoformat(expires_raw)
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                status = "✅ فعال" if expires > now else "⏳ منقضی"
+                expires_label = expires.strftime("%Y-%m-%d")
+            else:
+                status = "⏳ بدون اشتراک"
+        name = admin.get("first_name") or admin.get("username") or str(admin["telegram_id"])
+        uname = f"@{admin['username']}" if admin.get("username") else ""
+        lines.append(
+            f"• **{name}** {uname}\n"
+            f"  ID: `{admin['telegram_id']}` | {status} | "
+            f"انقضا: {expires_label} | "
+            f"گروه‌ها: {admin.get('group_count', 0)}",
         )
     return "\n".join(lines)
 
@@ -250,8 +333,30 @@ MSG_WEBHOOK_INVALID_URL = "آدرس URL نامعتبر است. باید با htt
 MSG_GROUP_AUTHORIZED = "✅ گروه `{chat_id}` مجاز شد."
 MSG_GROUP_BANNED = "🚫 گروه `{chat_id}` مسدود شد."
 MSG_USER_BANNED = "🔨 کاربر `{user_id}` به‌صورت سراسری بن شد."
+MSG_ADMIN_RENEWED = (
+    "✅ اشتراک ادمین `{user_id}` تمدید شد.\n"
+    "انقضای جدید: **{expires}** ({days} روز)"
+)
 MSG_INVALID_CHAT_ID = "شناسه گروه نامعتبر است."
 MSG_INVALID_USER_ID = "شناسه کاربر نامعتبر است."
+MSG_PENDING_WRONG_GROUP = "این تنظیم برای گروه دیگری است. دوباره از پنل همان گروه اقدام کنید."
+
+# --- Admin reply commands ---
+
+MSG_MODCMD_NO_TARGET = "پیام معتبری برای اقدام یافت نشد."
+MSG_MODCMD_SELF = "نمی‌توانید روی خودتان این کار را انجام دهید."
+MSG_MODCMD_PROTECTED = "⛔ ادمین اصلی/ادمین‌های گروه قابل اقدام نیستند."
+MSG_MODCMD_NO_PERMISSION = "ربات دسترسی لازم (بن/حذف/محدودسازی) را ندارد."
+MSG_MODCMD_RATE_LIMIT = "تلگرام محدودیت سرعت دارد. {seconds} ثانیه بعد دوباره تلاش کنید."
+MSG_MODCMD_FAILED = "عملیات انجام نشد: {error}"
+MSG_MODCMD_BAN = "🔨 {user} بن شد و پیام‌های اخیرش حذف شد."
+MSG_MODCMD_KICK = "👢 {user} از گروه اخراج شد."
+MSG_MODCMD_MUTE = "🔇 {user} سکوت شد."
+MSG_MODCMD_UNMUTE = "🔊 سکوت {user} برداشته شد."
+MSG_MODCMD_WARN = "⚠️ به {user} اخطار داده شد. (تعداد: {count})"
+MSG_MODCMD_WARN_BAN = "🔨 {user} پس از {count} اخطار بن شد."
+MSG_MODCMD_DEL = "🗑 پیام حذف شد."
+MSG_MODCMD_PURGE = "🧹 پیام‌های {user} پاک شد و از گروه اخراج شد."
 
 
 def provider_label(provider: str) -> str:

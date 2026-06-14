@@ -6,7 +6,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Optional
 
 from config import Config
@@ -45,6 +45,7 @@ class Database:
             self._pool = await asyncpg.create_pool(Config.POSTGRES_DSN, min_size=1, max_size=10)
             async with self._pool.acquire() as conn:
                 await self._init_schema_postgres(conn)
+                await self._migrate_schema_postgres(conn)
             logger.info("Connected to PostgreSQL")
             return
 
@@ -57,6 +58,7 @@ class Database:
         await self._conn.execute("PRAGMA synchronous=NORMAL")
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._init_schema_sqlite()
+        await self._migrate_schema_sqlite()
         await self._conn.commit()
         logger.info("Connected to SQLite at %s (WAL enabled)", db_path)
 
@@ -215,6 +217,13 @@ class Database:
                 value INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS group_message_daily (
+                chat_id INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, day)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_logs(chat_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_warnings_user ON user_warnings(user_id);
             CREATE INDEX IF NOT EXISTS idx_blacklist_chat ON group_blacklist(chat_id);
@@ -304,10 +313,36 @@ class Database:
                 key TEXT PRIMARY KEY,
                 value BIGINT NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS group_message_daily (
+                chat_id BIGINT NOT NULL,
+                day DATE NOT NULL,
+                count BIGINT NOT NULL DEFAULT 0,
+                PRIMARY KEY (chat_id, day)
+            );
             CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_logs(chat_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_warnings_user ON user_warnings(user_id);
             CREATE INDEX IF NOT EXISTS idx_blacklist_chat ON group_blacklist(chat_id);
             """
+        )
+
+    async def _migrate_schema_sqlite(self) -> None:
+        cols = await self._fetchall("PRAGMA table_info(users)")
+        col_names = {c["name"] for c in cols}
+        if "subscription_started_at" not in col_names:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN subscription_started_at TEXT",
+            )
+        if "subscription_expires_at" not in col_names:
+            await self._conn.execute(
+                "ALTER TABLE users ADD COLUMN subscription_expires_at TEXT",
+            )
+
+    async def _migrate_schema_postgres(self, conn: Any) -> None:
+        await conn.execute(
+            """
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMPTZ;
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ;
+            """,
         )
 
     async def ensure_super_admin(self, telegram_id: int) -> None:
@@ -371,6 +406,108 @@ class Database:
         if self._backend == "postgres":
             return bool(row and row.get("is_super_admin"))
         return bool(row and row.get("is_super_admin"))
+
+    async def start_admin_trial(self, telegram_id: int) -> None:
+        """Start the free trial for a non-super-admin on first /start."""
+        if telegram_id == Config.SUPER_ADMIN_ID:
+            return
+        row = await self._fetchone(
+            "SELECT subscription_started_at FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        if row and row.get("subscription_started_at"):
+            return
+        now = utcnow()
+        expires = now + timedelta(days=Config.ADMIN_TRIAL_DAYS)
+        if row:
+            await self._execute(
+                """
+                UPDATE users SET subscription_started_at = ?, subscription_expires_at = ?
+                WHERE telegram_id = ?
+                """,
+                (now.isoformat(), expires.isoformat(), telegram_id),
+            )
+        else:
+            await self._execute(
+                """
+                INSERT INTO users (
+                    telegram_id, is_super_admin, created_at,
+                    subscription_started_at, subscription_expires_at
+                ) VALUES (?, 0, ?, ?, ?)
+                """,
+                (telegram_id, now.isoformat(), now.isoformat(), expires.isoformat()),
+            )
+        await self._commit()
+
+    async def is_admin_subscription_active(self, telegram_id: int) -> bool:
+        if telegram_id == Config.SUPER_ADMIN_ID:
+            return True
+        if await self.is_super_admin(telegram_id):
+            return True
+        row = await self._fetchone(
+            "SELECT subscription_expires_at FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        if not row or not row.get("subscription_expires_at"):
+            return False
+        expires = datetime.fromisoformat(row["subscription_expires_at"])
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return expires > utcnow()
+
+    async def get_admin_subscription(self, telegram_id: int) -> Optional[dict[str, Any]]:
+        return await self._fetchone(
+            """
+            SELECT telegram_id, username, first_name, subscription_started_at,
+                   subscription_expires_at, is_super_admin
+            FROM users WHERE telegram_id = ?
+            """,
+            (telegram_id,),
+        )
+
+    async def extend_admin_subscription(self, telegram_id: int, days: int | None = None) -> datetime:
+        trial_days = days if days is not None else Config.ADMIN_TRIAL_DAYS
+        await self.upsert_user(telegram_id)
+        row = await self._fetchone(
+            "SELECT subscription_expires_at FROM users WHERE telegram_id = ?",
+            (telegram_id,),
+        )
+        now = utcnow()
+        current_expires = None
+        if row and row.get("subscription_expires_at"):
+            current_expires = datetime.fromisoformat(row["subscription_expires_at"])
+            if current_expires.tzinfo is None:
+                current_expires = current_expires.replace(tzinfo=timezone.utc)
+        base = current_expires if current_expires and current_expires > now else now
+        new_expires = base + timedelta(days=trial_days)
+        await self._execute(
+            """
+            UPDATE users SET subscription_expires_at = ?,
+            subscription_started_at = COALESCE(subscription_started_at, ?)
+            WHERE telegram_id = ?
+            """,
+            (new_expires.isoformat(), now.isoformat(), telegram_id),
+        )
+        await self._commit()
+        return new_expires
+
+    async def list_registered_admins(self) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            """
+            SELECT u.telegram_id, u.username, u.first_name,
+                   u.subscription_started_at, u.subscription_expires_at,
+                   u.is_super_admin,
+                   (
+                       SELECT COUNT(DISTINCT ga.chat_id)
+                       FROM group_admins ga WHERE ga.user_id = u.telegram_id
+                   ) AS group_count
+            FROM users u
+            WHERE EXISTS (
+                SELECT 1 FROM group_admins ga WHERE ga.user_id = u.telegram_id
+            )
+            ORDER BY u.subscription_expires_at ASC
+            """,
+        )
 
     async def is_globally_banned(self, telegram_id: int) -> bool:
         row = await self._fetchone(
@@ -460,6 +597,7 @@ class Database:
         await self._commit()
 
     async def increment_messages_processed(self, chat_id: int) -> None:
+        today = utcnow().strftime("%Y-%m-%d")
         await self._execute(
             "UPDATE groups SET messages_processed = messages_processed + 1 WHERE chat_id = ?",
             (chat_id,),
@@ -470,7 +608,80 @@ class Database:
             ON CONFLICT(key) DO UPDATE SET value = value + 1
             """,
         )
+        await self._execute(
+            """
+            INSERT INTO group_message_daily (chat_id, day, count) VALUES (?, ?, 1)
+            ON CONFLICT(chat_id, day) DO UPDATE SET count = count + 1
+            """,
+            (chat_id, today),
+        )
         await self._commit()
+
+    async def get_group_message_stats(self, chat_id: int) -> dict[str, int]:
+        now = utcnow()
+        week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+        month_start = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+        today = now.strftime("%Y-%m-%d")
+
+        week_row = await self._fetchone(
+            """
+            SELECT COALESCE(SUM(count), 0) AS total FROM group_message_daily
+            WHERE chat_id = ? AND day >= ? AND day <= ?
+            """,
+            (chat_id, week_start, today),
+        )
+        month_row = await self._fetchone(
+            """
+            SELECT COALESCE(SUM(count), 0) AS total FROM group_message_daily
+            WHERE chat_id = ? AND day >= ? AND day <= ?
+            """,
+            (chat_id, month_start, today),
+        )
+        group = await self._fetchone(
+            "SELECT messages_processed FROM groups WHERE chat_id = ?",
+            (chat_id,),
+        )
+        return {
+            "week": int(week_row["total"]) if week_row else 0,
+            "month": int(month_row["total"]) if month_row else 0,
+            "total": int(group["messages_processed"]) if group else 0,
+        }
+
+    async def get_groups_message_stats_bulk(self, chat_ids: list[int]) -> dict[int, dict[str, int]]:
+        if not chat_ids:
+            return {}
+        now = utcnow()
+        week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+        month_start = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+        today = now.strftime("%Y-%m-%d")
+        placeholders = ",".join("?" * len(chat_ids))
+        params = tuple(chat_ids) + (week_start, today)
+        week_rows = await self._fetchall(
+            f"""
+            SELECT chat_id, COALESCE(SUM(count), 0) AS total FROM group_message_daily
+            WHERE chat_id IN ({placeholders}) AND day >= ? AND day <= ?
+            GROUP BY chat_id
+            """,
+            params,
+        )
+        month_params = tuple(chat_ids) + (month_start, today)
+        month_rows = await self._fetchall(
+            f"""
+            SELECT chat_id, COALESCE(SUM(count), 0) AS total FROM group_message_daily
+            WHERE chat_id IN ({placeholders}) AND day >= ? AND day <= ?
+            GROUP BY chat_id
+            """,
+            month_params,
+        )
+        week_map = {r["chat_id"]: int(r["total"]) for r in week_rows}
+        month_map = {r["chat_id"]: int(r["total"]) for r in month_rows}
+        result: dict[int, dict[str, int]] = {}
+        for cid in chat_ids:
+            result[cid] = {
+                "week": week_map.get(cid, 0),
+                "month": month_map.get(cid, 0),
+            }
+        return result
 
     async def get_blacklist(self, chat_id: int) -> list[dict[str, Any]]:
         return await self._fetchall(
@@ -758,6 +969,12 @@ class Database:
         groups = await self._fetchall(
             "SELECT chat_id, title, messages_processed FROM groups WHERE is_authorized = 1",
         )
+        chat_ids = [g["chat_id"] for g in groups]
+        period_stats = await self.get_groups_message_stats_bulk(chat_ids)
+        for g in groups:
+            stats = period_stats.get(g["chat_id"], {"week": 0, "month": 0})
+            g["messages_week"] = stats["week"]
+            g["messages_month"] = stats["month"]
         total_messages_row = await self._fetchone(
             "SELECT value FROM stats WHERE key = 'total_messages'",
         )
