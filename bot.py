@@ -53,7 +53,6 @@ async def post_init(application: Application) -> None:
     await cache.connect()
     await db.ensure_super_admin(Config.SUPER_ADMIN_ID)
 
-    api_key = await db.get_ai_api_key()
     ai_settings = await db.get_ai_settings()
     ai = AIClassifier(
         api_key=ai_settings["api_key"],

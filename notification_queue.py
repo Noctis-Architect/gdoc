@@ -168,5 +168,5 @@ class NotificationQueue:
             except Exception as exc:
                 logger.error("Failed to send notification to %s: %s", item.chat_id, exc)
                 return False
-        await self._queue.put(item)
+        logger.warning("Dropping notification to %s after %s failed attempts", item.chat_id, max_attempts)
         return False

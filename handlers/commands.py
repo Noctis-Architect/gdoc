@@ -106,7 +106,6 @@ async def _user_can_manage_group(
         return member.status in (
             ChatMemberStatus.ADMINISTRATOR,
             ChatMemberStatus.OWNER,
-            ChatMemberStatus.CREATOR,
         )
     except Exception:
         return False

@@ -114,36 +114,42 @@ async def _handle_pending_input(
     except (BadRequest, Forbidden):
         pass
 
+    async def reply(msg: str, parse_mode: str = "") -> None:
+        kwargs = {"chat_id": user_id, "text": msg}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        await context.bot.send_message(**kwargs)
+
     if input_type == "rules":
         chat_id = pending["chat_id"]
         await ctx.db.update_group_field(chat_id, "custom_rules", text)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await update.message.reply_text(i18n.MSG_RULES_UPDATED)
+        await reply(i18n.MSG_RULES_UPDATED)
 
     elif input_type == "bl_keyword":
         chat_id = pending["chat_id"]
         await ctx.db.add_blacklist_pattern(chat_id, text, is_regex=False)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await update.message.reply_text(i18n.MSG_KEYWORD_ADDED.format(text=text), parse_mode="Markdown")
+        await reply(i18n.MSG_KEYWORD_ADDED.format(text=text), "Markdown")
 
     elif input_type == "bl_regex":
         chat_id = pending["chat_id"]
         await ctx.db.add_blacklist_pattern(chat_id, text, is_regex=True)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await update.message.reply_text(i18n.MSG_REGEX_ADDED.format(text=text), parse_mode="Markdown")
+        await reply(i18n.MSG_REGEX_ADDED.format(text=text), "Markdown")
 
     elif input_type == "bl_remove":
         chat_id = pending["chat_id"]
         await ctx.db.remove_blacklist_pattern(chat_id, text)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await update.message.reply_text(i18n.MSG_PATTERN_REMOVED.format(text=text), parse_mode="Markdown")
+        await reply(i18n.MSG_PATTERN_REMOVED.format(text=text), "Markdown")
 
     elif input_type == "sa_apikey":
         if not await ctx.db.is_super_admin(user_id):
             return
         await ctx.db.set_ai_api_key(text)
         await ctx.refresh_ai_config()
-        await update.message.reply_text(i18n.MSG_APIKEY_UPDATED)
+        await reply(i18n.MSG_APIKEY_UPDATED)
 
     elif input_type == "sa_baseurl":
         if not await ctx.db.is_super_admin(user_id):
@@ -151,22 +157,19 @@ async def _handle_pending_input(
         url = text.rstrip("/")
         await ctx.db.set_ai_base_url(url)
         await ctx.refresh_ai_config()
-        await update.message.reply_text(
-            i18n.MSG_BASEURL_UPDATED.format(url=url),
-            parse_mode="Markdown",
-        )
+        await reply(i18n.MSG_BASEURL_UPDATED.format(url=url), "Markdown")
 
     elif input_type == "sa_webhook_url":
         if not await ctx.db.is_super_admin(user_id):
             return
         url = normalize_webhook_url(text)
         if not validate_webhook_url(url):
-            await update.message.reply_text(i18n.MSG_WEBHOOK_INVALID_URL)
+            await reply(i18n.MSG_WEBHOOK_INVALID_URL)
             return
         await ctx.db.set_use_webhook(True)
         await ctx.db.set_webhook_url(url)
         update_env_file(Config.ENV_FILE, {"USE_WEBHOOK": "true", "WEBHOOK_URL": url})
-        await update.message.reply_text(i18n.MSG_WEBHOOK_URL_SAVED, parse_mode="Markdown")
+        await reply(i18n.MSG_WEBHOOK_URL_SAVED, "Markdown")
 
     elif input_type == "sa_auth":
         if not await ctx.db.is_super_admin(user_id):
@@ -174,11 +177,11 @@ async def _handle_pending_input(
         try:
             chat_id = int(text)
         except ValueError:
-            await update.message.reply_text(i18n.MSG_INVALID_CHAT_ID)
+            await reply(i18n.MSG_INVALID_CHAT_ID)
             return
         await ctx.db.set_group_authorized(chat_id, True)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await update.message.reply_text(i18n.MSG_GROUP_AUTHORIZED.format(chat_id=chat_id), parse_mode="Markdown")
+        await reply(i18n.MSG_GROUP_AUTHORIZED.format(chat_id=chat_id), "Markdown")
 
     elif input_type == "sa_ban_group":
         if not await ctx.db.is_super_admin(user_id):
@@ -186,11 +189,11 @@ async def _handle_pending_input(
         try:
             chat_id = int(text)
         except ValueError:
-            await update.message.reply_text(i18n.MSG_INVALID_CHAT_ID)
+            await reply(i18n.MSG_INVALID_CHAT_ID)
             return
         await ctx.db.set_group_authorized(chat_id, False)
         await ctx.moderation.invalidate_group_cache(chat_id)
-        await update.message.reply_text(i18n.MSG_GROUP_BANNED.format(chat_id=chat_id), parse_mode="Markdown")
+        await reply(i18n.MSG_GROUP_BANNED.format(chat_id=chat_id), "Markdown")
 
     elif input_type == "sa_ban_user":
         if not await ctx.db.is_super_admin(user_id):
@@ -198,10 +201,10 @@ async def _handle_pending_input(
         try:
             target_id = int(text)
         except ValueError:
-            await update.message.reply_text(i18n.MSG_INVALID_USER_ID)
+            await reply(i18n.MSG_INVALID_USER_ID)
             return
         await ctx.db.set_global_ban(target_id, True)
-        await update.message.reply_text(i18n.MSG_USER_BANNED.format(user_id=target_id), parse_mode="Markdown")
+        await reply(i18n.MSG_USER_BANNED.format(user_id=target_id), "Markdown")
 
 
 async def _apply_moderation_action(
