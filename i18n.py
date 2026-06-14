@@ -26,6 +26,8 @@ CLASSIFICATION_FA = {
 
 LAYER_FA = {
     "regex": "فیلتر محلی",
+    "ban_rules": "بن مستقیم",
+    "suspect_rules": "قوانین مشکوک",
     "ai": "هوش مصنوعی",
     "none": "—",
 }
@@ -134,6 +136,9 @@ def format_group_panel_header(group: dict) -> str:
 BTN_RULES = "📝 قوانین گروه"
 BTN_RULES_BAN = "🔨 قوانین بن مستقیم"
 BTN_RULES_SUSPECT = "🔍 قوانین مشکوک"
+BTN_RULES_TEMPLATES = "📦 تمپلیت‌های آماده"
+BTN_TEMPLATES_BAN = "🔨 تمپلیت بن مستقیم"
+BTN_TEMPLATES_SUSPECT = "🔍 تمپلیت مشکوک"
 BTN_STRICTNESS = "🎚 سطح سختی"
 BTN_ACTION = "⚡ عملکرد پیام مشکوک"
 BTN_THRESHOLD = "⚠️ آستانه اخطار"
@@ -189,8 +194,9 @@ PROMPT_ACTION = "برخورد با پیام‌های مشکوک:\n_پیش‌فر
 PROMPT_THRESHOLD = "حداکثر تعداد اخطار قبل از بن خودکار:"
 PROMPT_RULES = (
     "نوع قوانین را انتخاب کنید:\n\n"
-    "🔨 **بن مستقیم** — نقض = تخلف و بن فوری\n"
-    "🔍 **مشکوک** — نقض = پیام مشکوک (اخطار بر اساس تنظیمات)"
+    "📦 **تمپلیت‌های آماده** — هک، VPN، کلاهبرداری و… (فعال/غیرفعال)\n"
+    "🔨 **بن مستقیم** — نقض = حذف پیام + بن فوری\n"
+    "🔍 **مشکوک** — نقض = فقط اطلاع در پیوی ادمین"
 )
 PROMPT_RULES_BAN = (
     "قوانین **بن مستقیم** را ارسال کنید.\n"
@@ -209,6 +215,22 @@ PROMPT_RULES_SUSPECT = (
     "قوانین فعلی:\n{preview}"
 )
 PROMPT_RULES_NONE = "(تعریف نشده)"
+
+PROMPT_TEMPLATES = (
+    "📦 **تمپلیت‌های آماده**\n"
+    "روی هر مورد بزنید تا فعال/غیرفعال شود.\n"
+    "✅ = فعال | ⬜ = غیرفعال"
+)
+
+PROMPT_TEMPLATES_BAN = (
+    "🔨 **تمپلیت‌های بن مستقیم**\n"
+    "نقض = حذف پیام + بن فوری (بدون نیاز به تأیید ادمین)"
+)
+
+PROMPT_TEMPLATES_SUSPECT = (
+    "🔍 **تمپلیت‌های مشکوک**\n"
+    "نقض = فقط اطلاع در پیوی ادمین (پیام در گروه باقی می‌ماند)"
+)
 PROMPT_BL_KEYWORD = (
     "کلمه یا عبارت را برای لیست سیاه ارسال کنید (بدون حساسیت به حروف).\n"
     "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
@@ -405,12 +427,13 @@ def format_admin_review_alert(
 ) -> str:
     uname = f"@{escape_md(username)}" if username else "ندارد"
     cls = classification_label(classification)
+    header = "🔍 **بررسی پیام مشکوک**" if classification == "SUSPECT" else "⚠️ **بررسی پیام تخلف**"
     return (
-        f"🔍 **بررسی پیام مشکوک**\n"
+        f"{header}\n"
         f"گروه: {escape_md(group_title)}\n"
         f"کاربر: {escape_md(user_name)} ({uname})\n"
         f"طبقه‌بندی: **{cls}**\n"
-        f"دلیل AI: {escape_md(reason)}\n\n"
+        f"دلیل: {escape_md(reason)}\n\n"
         f"پیام:\n_{escape_md(text[:500])}_\n\n"
         f"_پیام در گروه حذف نشده. لطفاً مضر یا غیرمضر بودن را مشخص کنید._"
     )
@@ -487,6 +510,7 @@ MSG_SA_NO_GROUPS = "هنوز گروهی ثبت نشده."
 
 MSG_RULES_UPDATED = "✅ قوانین بن مستقیم ذخیره شد."
 MSG_RULES_SUSPECT_UPDATED = "✅ قوانین مشکوک ذخیره شد."
+MSG_TEMPLATE_TOGGLED = "✅ تمپلیت **{label}** {status} شد."
 MSG_KEYWORD_ADDED = "✅ کلمه اضافه شد: `{text}`"
 MSG_REGEX_ADDED = "✅ Regex اضافه شد: `{text}`"
 MSG_PATTERN_REMOVED = "✅ الگو حذف شد: `{text}`"

@@ -66,19 +66,28 @@ def extract_ban_match_targets(rules_text: str) -> list[str]:
 
 
 def match_direct_ban_rules(message_text: str, ban_rules: str) -> Optional[str]:
-    """
-    Return a violation reason when the message matches a ban-rule example/phrase.
+    """Return a violation reason when the message matches a ban-rule example/phrase."""
+    return match_rule_examples(message_text, ban_rules, "بن مستقیم")
 
-    This runs before AI so explicit ban examples always produce VIOLATION, not SUSPECT.
+
+def match_rule_examples(
+    message_text: str,
+    rules_text: str,
+    rule_kind: str = "قانون",
+) -> Optional[str]:
     """
-    if not message_text.strip() or not ban_rules.strip():
+    Return a reason when the message matches an example/phrase from rules.
+
+    Runs before AI so explicit examples always produce deterministic matches.
+    """
+    if not message_text.strip() or not rules_text.strip():
         return None
 
     normalized_message = _normalize_text(message_text)
-    for target in extract_ban_match_targets(ban_rules):
+    for target in extract_ban_match_targets(rules_text):
         normalized_target = _normalize_text(target)
         if normalized_target and normalized_target in normalized_message:
             preview = target if len(target) <= 60 else f"{target[:57]}..."
-            return f"مطابق قوانین بن مستقیم (مثال: {preview})"
+            return f"مطابق قوانین {rule_kind} (مثال: {preview})"
 
     return None

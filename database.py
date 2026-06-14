@@ -29,6 +29,7 @@ class GroupConfig:
     warning_threshold: int
     custom_rules: str
     suspect_rules: str
+    enabled_templates: str = ""
 
 
 class Database:
@@ -150,6 +151,7 @@ class Database:
                 warning_threshold INTEGER NOT NULL DEFAULT 3,
                 custom_rules TEXT NOT NULL DEFAULT '',
                 suspect_rules TEXT NOT NULL DEFAULT '',
+                enabled_templates TEXT NOT NULL DEFAULT '',
                 bot_is_admin INTEGER NOT NULL DEFAULT 0,
                 messages_processed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -257,6 +259,7 @@ class Database:
                 warning_threshold INTEGER NOT NULL DEFAULT 3,
                 custom_rules TEXT NOT NULL DEFAULT '',
                 suspect_rules TEXT NOT NULL DEFAULT '',
+                enabled_templates TEXT NOT NULL DEFAULT '',
                 bot_is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                 messages_processed INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL,
@@ -361,6 +364,10 @@ class Database:
             await self._conn.execute(
                 "ALTER TABLE groups ADD COLUMN suspect_rules TEXT NOT NULL DEFAULT ''",
             )
+        if "enabled_templates" not in group_names:
+            await self._conn.execute(
+                "ALTER TABLE groups ADD COLUMN enabled_templates TEXT NOT NULL DEFAULT ''",
+            )
 
     async def _migrate_schema_postgres(self, conn: Any) -> None:
         await conn.execute(
@@ -370,6 +377,7 @@ class Database:
             ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS message_id BIGINT;
             ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'auto';
             ALTER TABLE groups ADD COLUMN IF NOT EXISTS suspect_rules TEXT NOT NULL DEFAULT '';
+            ALTER TABLE groups ADD COLUMN IF NOT EXISTS enabled_templates TEXT NOT NULL DEFAULT '';
             """,
         )
 
@@ -605,6 +613,7 @@ class Database:
             warning_threshold=row["warning_threshold"],
             custom_rules=row["custom_rules"] or "",
             suspect_rules=row.get("suspect_rules") or "",
+            enabled_templates=row.get("enabled_templates") or "",
         )
 
     async def update_group_field(self, chat_id: int, field: str, value: Any) -> None:
@@ -615,6 +624,7 @@ class Database:
             "warning_threshold",
             "custom_rules",
             "suspect_rules",
+            "enabled_templates",
             "is_authorized",
             "bot_is_admin",
         }

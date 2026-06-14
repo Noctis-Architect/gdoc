@@ -64,10 +64,52 @@ def group_admin_panel(chat_id: int, group: dict, *, from_sa: bool = False) -> In
 
 def rules_menu_keyboard(chat_id: int, *, from_sa: bool = False) -> InlineKeyboardMarkup:
     rows = [
+        [InlineKeyboardButton(i18n.BTN_RULES_TEMPLATES, callback_data=_cb("templates", chat_id))],
         [InlineKeyboardButton(i18n.BTN_RULES_BAN, callback_data=_cb("rules_ban", chat_id))],
         [InlineKeyboardButton(i18n.BTN_RULES_SUSPECT, callback_data=_cb("rules_suspect", chat_id))],
         [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("panel", chat_id))],
     ]
+    if from_sa:
+        rows.append(
+            [InlineKeyboardButton(i18n.BTN_SA_GROUPS_BACK, callback_data=_cb("sa_grps", 0, "0"))],
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def templates_menu_keyboard(chat_id: int, *, from_sa: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(i18n.BTN_TEMPLATES_BAN, callback_data=_cb("tmpl_ban", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_TEMPLATES_SUSPECT, callback_data=_cb("tmpl_suspect", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("rules", chat_id))],
+    ]
+    if from_sa:
+        rows.append(
+            [InlineKeyboardButton(i18n.BTN_SA_GROUPS_BACK, callback_data=_cb("sa_grps", 0, "0"))],
+        )
+    return InlineKeyboardMarkup(rows)
+
+
+def template_list_keyboard(
+    chat_id: int,
+    templates: list,
+    enabled: dict[str, bool],
+    *,
+    from_sa: bool = False,
+) -> InlineKeyboardMarkup:
+    rows = []
+    for tmpl in templates:
+        is_on = enabled.get(tmpl.id, False)
+        mark = "✅" if is_on else "⬜"
+        label = f"{mark} {tmpl.label}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    label,
+                    callback_data=_cb("tmpl_toggle", chat_id, tmpl.id),
+                ),
+            ],
+        )
+    rows.append([InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("templates", chat_id))])
     if from_sa:
         rows.append(
             [InlineKeyboardButton(i18n.BTN_SA_GROUPS_BACK, callback_data=_cb("sa_grps", 0, "0"))],

@@ -12,6 +12,13 @@ import i18n
 import keyboards
 from config import Config
 from context import BotContext
+from rule_templates import (
+    BAN_TEMPLATES,
+    SUSPECT_TEMPLATES,
+    get_template,
+    parse_enabled_templates,
+    serialize_enabled_templates,
+)
 from handlers.admin_utils import can_manage_group_fast, has_admin_access, is_telegram_group_admin
 from handlers.moderation_actions import (
     ban_user_in_chat,
@@ -100,6 +107,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "rules": _show_rules_menu,
         "rules_ban": _prompt_ban_rules,
         "rules_suspect": _prompt_suspect_rules,
+        "templates": _show_templates_menu,
+        "tmpl_ban": _show_ban_templates,
+        "tmpl_suspect": _show_suspect_templates,
+        "tmpl_toggle": _toggle_template,
         "blacklist": _show_blacklist,
         "bl_add_kw": _prompt_blacklist_keyword,
         "bl_add_rx": _prompt_blacklist_regex,
@@ -455,6 +466,68 @@ async def _prompt_suspect_rules(query, ctx: BotContext, chat_id: int, _extra: st
     await query.edit_message_text(
         i18n.PROMPT_RULES_SUSPECT.format(preview=preview or i18n.PROMPT_RULES_NONE),
         reply_markup=await _back_kb(chat_id, query, ctx),
+    )
+
+
+async def _show_templates_menu(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    await query.edit_message_text(
+        i18n.PROMPT_TEMPLATES,
+        reply_markup=keyboards.templates_menu_keyboard(chat_id, from_sa=from_sa),
+        parse_mode="Markdown",
+    )
+
+
+async def _show_ban_templates(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    enabled = parse_enabled_templates((group or {}).get("enabled_templates"))
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    await query.edit_message_text(
+        i18n.PROMPT_TEMPLATES_BAN,
+        reply_markup=keyboards.template_list_keyboard(
+            chat_id, BAN_TEMPLATES, enabled, from_sa=from_sa,
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def _show_suspect_templates(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    enabled = parse_enabled_templates((group or {}).get("enabled_templates"))
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    await query.edit_message_text(
+        i18n.PROMPT_TEMPLATES_SUSPECT,
+        reply_markup=keyboards.template_list_keyboard(
+            chat_id, SUSPECT_TEMPLATES, enabled, from_sa=from_sa,
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def _toggle_template(query, ctx: BotContext, chat_id: int, extra: str, _context) -> None:
+    if not extra:
+        return
+    tmpl = get_template(extra)
+    if not tmpl:
+        return
+
+    group = await ctx.db.group_to_dict(chat_id)
+    enabled = parse_enabled_templates((group or {}).get("enabled_templates"))
+    enabled[extra] = not enabled.get(extra, False)
+    await ctx.db.update_group_field(chat_id, "enabled_templates", serialize_enabled_templates(enabled))
+    await ctx.moderation.invalidate_group_cache(chat_id)
+
+    status = "فعال" if enabled[extra] else "غیرفعال"
+    templates = BAN_TEMPLATES if tmpl.kind == "ban" else SUSPECT_TEMPLATES
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    header = i18n.PROMPT_TEMPLATES_BAN if tmpl.kind == "ban" else i18n.PROMPT_TEMPLATES_SUSPECT
+    await _safe_edit(
+        query,
+        f"{header}\n\n{i18n.MSG_TEMPLATE_TOGGLED.format(label=tmpl.label, status=status)}",
+        reply_markup=keyboards.template_list_keyboard(
+            chat_id, templates, enabled, from_sa=from_sa,
+        ),
+        parse_mode="Markdown",
     )
 
 

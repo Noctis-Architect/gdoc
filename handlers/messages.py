@@ -91,8 +91,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not decision.flagged:
         return
 
-    review_mode = group and group.action_mode == "keep_alert"
     msg_id = update.message.message_id
+
+    if decision.instant_action:
+        deleted = await safe_delete_message(context, chat.id, msg_id)
+        await ban_user_in_chat(
+            context, chat.id, user.id, decision.reason, ctx=ctx, revoke_messages=True,
+        )
+        reasons = [decision.reason] if decision.reason else []
+        await notify_group_ban(context, chat.id, user, 0, reasons)
+        await ctx.db.add_audit_log(
+            chat_id=chat.id,
+            user_id=user.id,
+            username=user.username,
+            message_text=text,
+            classification=decision.classification,
+            reason=decision.reason,
+            layer=decision.layer,
+            action_taken="deleted,ban_requested" if deleted else "delete_failed,ban_requested",
+            message_id=msg_id,
+        )
+        await _notify_cross_group(
+            ctx,
+            context.bot,
+            source_chat_id=chat.id,
+            user_id=user.id,
+            username=user.username,
+            reason=decision.reason,
+        )
+        return
+
+    review_mode = group and group.action_mode == "keep_alert"
 
     if review_mode:
         audit_id = await ctx.db.add_audit_log(
@@ -156,7 +185,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
 
     if decision.should_ban and not decision.should_warn:
-        await ban_user_in_chat(context, chat.id, user.id, decision.reason, ctx=ctx)
+        await ban_user_in_chat(
+            context, chat.id, user.id, decision.reason, ctx=ctx, revoke_messages=True,
+        )
         reasons = [decision.reason] if decision.reason else []
         await notify_group_ban(context, chat.id, user, 0, reasons)
         await _notify_cross_group(
