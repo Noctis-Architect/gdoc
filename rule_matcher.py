@@ -11,6 +11,7 @@ _EXAMPLE_PREFIX = re.compile(
 )
 _QUOTED = re.compile(r'[«"]([^»"]{2,})[»"]')
 _BULLET_PREFIX = re.compile(r"^[-*•\d.)\]]+\s*")
+_KEYWORD_PREFIX = re.compile(r"کلیدواژه\s*[:：]\s*(.+)$", re.IGNORECASE)
 
 
 def _normalize_text(text: str) -> str:
@@ -65,9 +66,50 @@ def extract_ban_match_targets(rules_text: str) -> list[str]:
     return targets
 
 
+def extract_ban_keywords(rules_text: str) -> list[str]:
+    """Extract explicit keywords from ban rules (کلیدواژه: ...)."""
+    if not rules_text.strip():
+        return []
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+
+    for line in rules_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        keyword_match = _KEYWORD_PREFIX.search(stripped)
+        if not keyword_match:
+            continue
+        for part in re.split(r"[,،]", keyword_match.group(1)):
+            cleaned = part.strip().strip(".,;:!?")
+            if len(cleaned) < 2:
+                continue
+            key = _normalize_text(cleaned)
+            if key and key not in seen:
+                seen.add(key)
+                keywords.append(cleaned)
+
+    return keywords
+
+
 def match_direct_ban_rules(message_text: str, ban_rules: str) -> Optional[str]:
-    """Return a violation reason when the message matches a ban-rule example/phrase."""
-    return match_rule_examples(message_text, ban_rules, "بن مستقیم")
+    """Return a violation reason when the message matches ban-rule examples or keywords."""
+    if not message_text.strip() or not ban_rules.strip():
+        return None
+
+    hit = match_rule_examples(message_text, ban_rules, "بن مستقیم")
+    if hit:
+        return hit
+
+    normalized_message = _normalize_text(message_text)
+    for keyword in extract_ban_keywords(ban_rules):
+        normalized_keyword = _normalize_text(keyword)
+        if normalized_keyword and normalized_keyword in normalized_message:
+            preview = keyword if len(keyword) <= 40 else f"{keyword[:37]}..."
+            return f"مطابق قوانین بن مستقیم (کلیدواژه: {preview})"
+
+    return None
 
 
 def match_rule_examples(

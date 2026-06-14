@@ -27,11 +27,11 @@ BAN_TEMPLATES: list[RuleTemplate] = [
         description="فروش/درخواست ابزار هک، رمزنگاری، نفوذ",
         rules_text=(
             "- فروش یا تبلیغ خدمات هک و نفوذ ممنوع\n"
+            "کلیدواژه: هک, هک میکنم, نفوذ, brute force, sql injection\n"
             "مثال: هک اکانت میزنم\n"
+            "مثال: هک میکنم موبایل\n"
             "مثال: رمز وای‌فای رو میگیرم\n"
-            "مثال: نفوذ به سرور\n"
-            "مثال: brute force\n"
-            "مثال: sql injection"
+            "مثال: نفوذ به سرور"
         ),
     ),
     RuleTemplate(

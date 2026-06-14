@@ -10,7 +10,7 @@ from typing import Any, Optional
 from ai import AIClassifier, ClassificationResult
 from database import Database, GroupConfig
 from redis_cache import RedisCache
-from rule_matcher import match_rule_examples
+from rule_matcher import match_direct_ban_rules, match_rule_examples
 from rule_templates import (
     build_ban_rules_text,
     build_suspect_rules_text,
@@ -135,7 +135,7 @@ class ModerationEngine:
         ban_rules_text: str,
         message_text: str,
     ) -> Optional[ModerationDecision]:
-        reason = match_rule_examples(message_text, ban_rules_text, "بن مستقیم")
+        reason = match_direct_ban_rules(message_text, ban_rules_text)
         if not reason:
             return None
 
@@ -210,6 +210,17 @@ class ModerationEngine:
 
         delete_on_violation = group.action_mode == "delete_flag"
         if result.classification == "VIOLATION":
+            if ban_rules_text.strip():
+                return ModerationDecision(
+                    flagged=True,
+                    classification="VIOLATION",
+                    reason=result.reason,
+                    layer="ai",
+                    should_delete=True,
+                    should_warn=False,
+                    should_ban=True,
+                    instant_action=True,
+                )
             should_delete = delete_on_violation
             should_warn = True
             should_ban = False
@@ -229,7 +240,7 @@ class ModerationEngine:
         )
 
     def _apply_keep_alert(self, decision: ModerationDecision) -> ModerationDecision:
-        """In keep_alert mode, only SUSPECT goes to admin review; no auto-actions."""
+        """In keep_alert mode, only SUSPECT goes to admin review."""
         if decision.instant_action:
             return decision
         if decision.classification == "SUSPECT":
@@ -242,9 +253,6 @@ class ModerationEngine:
                 should_warn=False,
                 should_ban=False,
             )
-        decision.should_delete = False
-        decision.should_warn = False
-        decision.should_ban = False
         return decision
 
     async def evaluate(

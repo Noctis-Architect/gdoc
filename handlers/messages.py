@@ -123,7 +123,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     review_mode = group and group.action_mode == "keep_alert"
 
-    if review_mode:
+    if review_mode and decision.classification == "SUSPECT":
         audit_id = await ctx.db.add_audit_log(
             chat_id=chat.id,
             user_id=user.id,
