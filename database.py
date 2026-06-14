@@ -145,7 +145,7 @@ class Database:
                 is_authorized INTEGER NOT NULL DEFAULT 1,
                 moderation_enabled INTEGER NOT NULL DEFAULT 1,
                 strictness TEXT NOT NULL DEFAULT 'medium',
-                action_mode TEXT NOT NULL DEFAULT 'delete_flag',
+                action_mode TEXT NOT NULL DEFAULT 'keep_alert',
                 warning_threshold INTEGER NOT NULL DEFAULT 3,
                 custom_rules TEXT NOT NULL DEFAULT '',
                 bot_is_admin INTEGER NOT NULL DEFAULT 0,
@@ -185,6 +185,8 @@ class Database:
                 reason TEXT NOT NULL,
                 layer TEXT NOT NULL,
                 action_taken TEXT NOT NULL,
+                message_id INTEGER,
+                review_status TEXT NOT NULL DEFAULT 'auto',
                 created_at TEXT NOT NULL
             );
 
@@ -249,7 +251,7 @@ class Database:
                 is_authorized BOOLEAN NOT NULL DEFAULT TRUE,
                 moderation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 strictness TEXT NOT NULL DEFAULT 'medium',
-                action_mode TEXT NOT NULL DEFAULT 'delete_flag',
+                action_mode TEXT NOT NULL DEFAULT 'keep_alert',
                 warning_threshold INTEGER NOT NULL DEFAULT 3,
                 custom_rules TEXT NOT NULL DEFAULT '',
                 bot_is_admin BOOLEAN NOT NULL DEFAULT FALSE,
@@ -286,6 +288,8 @@ class Database:
                 reason TEXT NOT NULL,
                 layer TEXT NOT NULL,
                 action_taken TEXT NOT NULL,
+                message_id BIGINT,
+                review_status TEXT NOT NULL DEFAULT 'auto',
                 created_at TIMESTAMPTZ NOT NULL
             );
             CREATE TABLE IF NOT EXISTS cross_group_events (
@@ -337,11 +341,24 @@ class Database:
                 "ALTER TABLE users ADD COLUMN subscription_expires_at TEXT",
             )
 
+        audit_cols = await self._fetchall("PRAGMA table_info(audit_logs)")
+        audit_names = {c["name"] for c in audit_cols}
+        if "message_id" not in audit_names:
+            await self._conn.execute(
+                "ALTER TABLE audit_logs ADD COLUMN message_id INTEGER",
+            )
+        if "review_status" not in audit_names:
+            await self._conn.execute(
+                "ALTER TABLE audit_logs ADD COLUMN review_status TEXT NOT NULL DEFAULT 'auto'",
+            )
+
     async def _migrate_schema_postgres(self, conn: Any) -> None:
         await conn.execute(
             """
             ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMPTZ;
             ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ;
+            ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS message_id BIGINT;
+            ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'auto';
             """,
         )
 
@@ -790,6 +807,94 @@ class Database:
         )
         await self._commit()
 
+    async def set_group_ban(
+        self,
+        chat_id: int,
+        user_id: int,
+        banned: bool,
+        reason: str | None = None,
+    ) -> None:
+        now = utcnow().isoformat()
+        row = await self._fetchone(
+            "SELECT id FROM user_warnings WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+        if row:
+            if banned:
+                await self._execute(
+                    """
+                    UPDATE user_warnings SET is_banned = 1, ban_reason = ?,
+                    banned_at = ?, updated_at = ?
+                    WHERE chat_id = ? AND user_id = ?
+                    """,
+                    (reason or "Banned", now, now, chat_id, user_id),
+                )
+            else:
+                await self._execute(
+                    """
+                    UPDATE user_warnings SET is_banned = 0, ban_reason = NULL,
+                    banned_at = NULL, updated_at = ?
+                    WHERE chat_id = ? AND user_id = ?
+                    """,
+                    (now, chat_id, user_id),
+                )
+        elif banned:
+            await self._execute(
+                """
+                INSERT INTO user_warnings (
+                    chat_id, user_id, warning_count, is_banned, ban_reason, banned_at, updated_at
+                ) VALUES (?, ?, 0, 1, ?, ?, ?)
+                """,
+                (chat_id, user_id, reason or "Banned", now, now),
+            )
+        await self._commit()
+
+    async def list_group_banned_users(
+        self,
+        chat_id: int,
+        limit: int = 15,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            """
+            SELECT uw.user_id, uw.ban_reason, uw.banned_at, uw.warning_count,
+                   u.username, u.first_name
+            FROM user_warnings uw
+            LEFT JOIN users u ON u.telegram_id = uw.user_id
+            WHERE uw.chat_id = ? AND uw.is_banned = 1
+            ORDER BY uw.banned_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (chat_id, limit, offset),
+        )
+
+    async def count_group_banned_users(self, chat_id: int) -> int:
+        row = await self._fetchone(
+            "SELECT COUNT(*) AS cnt FROM user_warnings WHERE chat_id = ? AND is_banned = 1",
+            (chat_id,),
+        )
+        return int(row["cnt"]) if row else 0
+
+    async def list_globally_banned_users(self, limit: int = 30) -> list[dict[str, Any]]:
+        return await self._fetchall(
+            """
+            SELECT telegram_id, username, first_name, created_at
+            FROM users WHERE is_banned_globally = 1
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (limit,),
+        )
+
+    async def get_user_warnings_row(
+        self,
+        chat_id: int,
+        user_id: int,
+    ) -> Optional[dict[str, Any]]:
+        return await self._fetchone(
+            "SELECT * FROM user_warnings WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        )
+
     async def add_audit_log(
         self,
         chat_id: int,
@@ -800,13 +905,16 @@ class Database:
         reason: str,
         layer: str,
         action_taken: str,
+        *,
+        message_id: Optional[int] = None,
+        review_status: str = "auto",
     ) -> int:
         await self._execute(
             """
             INSERT INTO audit_logs (
                 chat_id, user_id, username, message_text, classification,
-                reason, layer, action_taken, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reason, layer, action_taken, message_id, review_status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 chat_id,
@@ -817,6 +925,8 @@ class Database:
                 reason,
                 layer,
                 action_taken,
+                message_id,
+                review_status,
                 utcnow().isoformat(),
             ),
         )
@@ -828,6 +938,19 @@ class Database:
         else:
             row = await self._fetchone("SELECT last_insert_rowid() AS id")
         return row["id"] if row else 0
+
+    async def get_audit_log(self, audit_id: int) -> Optional[dict[str, Any]]:
+        return await self._fetchone(
+            "SELECT * FROM audit_logs WHERE id = ?",
+            (audit_id,),
+        )
+
+    async def update_audit_review_status(self, audit_id: int, status: str) -> None:
+        await self._execute(
+            "UPDATE audit_logs SET review_status = ? WHERE id = ?",
+            (status, audit_id),
+        )
+        await self._commit()
 
     async def get_audit_logs(self, chat_id: int, limit: int = 10) -> list[dict[str, Any]]:
         return await self._fetchall(

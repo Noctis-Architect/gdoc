@@ -15,9 +15,13 @@ from context import BotContext
 from handlers.admin_utils import can_manage_group_fast, has_admin_access, is_telegram_group_admin
 from handlers.moderation_actions import (
     ban_user_in_chat,
+    increment_warning_cached,
     reset_warnings_cached,
+    restore_message_from_audit,
+    safe_delete_message,
     unban_user_in_chat,
 )
+from handlers.group_notifications import notify_group_ban, notify_group_warning
 from webhook_manager import (
     normalize_webhook_url,
     update_env_file,
@@ -57,8 +61,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     ctx: BotContext = context.bot_data["ctx"]
     user_id = update.effective_user.id
 
-    if action in ("mod_forgive", "mod_ban", "mod_unban"):
+    if action in ("mod_forgive", "mod_ban", "mod_unban", "mod_restore"):
         await _handle_mod_action(action, query, ctx, chat_id, extra, context)
+        return
+
+    if action in ("review_harm", "review_safe", "review_del"):
+        await _handle_review_action(action, query, ctx, chat_id, extra, context)
         return
 
     if action.startswith("sa_"):
@@ -96,6 +104,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "bl_remove": _prompt_blacklist_remove,
         "audit": _show_audit,
         "stats": _show_group_stats,
+        "banned": _show_banned_users,
+        "banned_page": _show_banned_users,
+        "panel_unban": _panel_unban_user,
     }
 
     handler = handlers.get(action)
@@ -106,6 +117,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def _back_kb(chat_id: int, query, ctx: BotContext):
     from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
     return keyboards.back_to_group_panel(chat_id, from_sa=from_sa)
+
+
+def _parse_user_extra(extra: str) -> tuple[int, int]:
+    """Parse extra as user_id or user_id:audit_id."""
+    if ":" in extra:
+        parts = extra.split(":", 1)
+        return int(parts[0]), int(parts[1])
+    return int(extra), 0
 
 
 async def _handle_mod_action(
@@ -120,7 +139,7 @@ async def _handle_mod_action(
         return
 
     try:
-        target_user_id = int(extra)
+        target_user_id, audit_id = _parse_user_extra(extra)
     except ValueError:
         return
 
@@ -136,15 +155,31 @@ async def _handle_mod_action(
         await reset_warnings_cached(ctx, chat_id, target_user_id)
         result = i18n.MSG_MOD_FORGIVEN.format(user=f"کاربر {target_user_id}")
     elif action == "mod_ban":
-        await ban_user_in_chat(context, chat_id, target_user_id, "Banned by group admin")
+        await ban_user_in_chat(
+            context, chat_id, target_user_id, "Banned by group admin", ctx=ctx,
+        )
         result = i18n.MSG_MOD_BANNED.format(user=f"کاربر {target_user_id}")
     elif action == "mod_unban":
-        ok = await unban_user_in_chat(context, chat_id, target_user_id)
+        ok = await unban_user_in_chat(context, chat_id, target_user_id, ctx=ctx)
         if ok:
             await reset_warnings_cached(ctx, chat_id, target_user_id)
             result = i18n.MSG_MOD_UNBANNED.format(user=f"کاربر {target_user_id}")
         else:
             result = i18n.MSG_MOD_ALREADY_DONE
+    elif action == "mod_restore":
+        audit = await ctx.db.get_audit_log(audit_id) if audit_id else None
+        if not audit:
+            result = i18n.MSG_MOD_ALREADY_DONE
+        else:
+            user_label = audit.get("username") or str(target_user_id)
+            restored = await restore_message_from_audit(
+                context, chat_id, audit.get("message_text", ""), user_label,
+            )
+            result = (
+                i18n.MSG_MOD_RESTORED.format(user=user_label)
+                if restored
+                else i18n.MSG_MOD_ALREADY_DONE
+            )
     else:
         return
 
@@ -155,6 +190,157 @@ async def _handle_mod_action(
         )
     except BadRequest:
         await query.message.reply_text(result)
+
+
+async def _handle_review_action(
+    action: str,
+    query,
+    ctx: BotContext,
+    chat_id: int,
+    extra: str,
+    context,
+) -> None:
+    if not chat_id or not extra:
+        return
+
+    try:
+        audit_id = int(extra)
+    except ValueError:
+        return
+
+    admin_id = query.from_user.id
+    if not await is_telegram_group_admin(context.bot, chat_id, admin_id, ctx.db):
+        try:
+            await query.message.reply_text(i18n.MSG_MOD_NOT_GROUP_ADMIN)
+        except BadRequest:
+            pass
+        return
+
+    audit = await ctx.db.get_audit_log(audit_id)
+    if not audit:
+        await query.edit_message_text(i18n.MSG_MOD_ALREADY_DONE, reply_markup=None)
+        return
+
+    if audit.get("review_status") in ("approved", "dismissed", "deleted"):
+        await query.edit_message_text(
+            f"{query.message.text}\n\n{i18n.MSG_MOD_REVIEW_DONE}",
+            reply_markup=None,
+        )
+        return
+
+    target_user_id = audit["user_id"]
+    reason = audit.get("reason") or "تخلف"
+    group = await ctx.db.group_to_dict(chat_id)
+    threshold = (group or {}).get("warning_threshold", 3)
+
+    if action == "review_safe":
+        await ctx.db.update_audit_review_status(audit_id, "dismissed")
+        result = i18n.MSG_MOD_REVIEW_SAFE
+    elif action == "review_del":
+        msg_id = audit.get("message_id")
+        if msg_id:
+            await safe_delete_message(context, chat_id, msg_id)
+        await ctx.db.update_audit_review_status(audit_id, "deleted")
+        result = "🗑 پیام در گروه حذف شد."
+    elif action == "review_harm":
+        count, auto_banned = await increment_warning_cached(ctx, chat_id, target_user_id)
+        await ctx.db.update_audit_review_status(audit_id, "approved")
+        msg_id = audit.get("message_id")
+        if msg_id:
+            await safe_delete_message(context, chat_id, msg_id)
+        user_stub = type("U", (), {
+            "id": target_user_id,
+            "full_name": audit.get("username") or str(target_user_id),
+            "username": audit.get("username"),
+        })()
+        if auto_banned:
+            await ban_user_in_chat(
+                context, chat_id, target_user_id, reason, ctx=ctx,
+            )
+            reasons = await ctx.db.get_user_violation_reasons(chat_id, target_user_id)
+            await notify_group_ban(context, chat_id, user_stub, count, reasons)
+            result = i18n.MSG_MODCMD_WARN_BAN.format(
+                user=user_stub.full_name, count=count,
+            )
+        else:
+            await notify_group_warning(
+                context,
+                chat_id,
+                user_stub,
+                reason,
+                count,
+                threshold,
+                deleted=bool(msg_id),
+                audit_id=audit_id,
+            )
+            result = i18n.MSG_MOD_REVIEW_HARM
+    else:
+        return
+
+    try:
+        await query.edit_message_text(
+            f"{query.message.text}\n\n{result}",
+            reply_markup=None,
+        )
+    except BadRequest:
+        await query.message.reply_text(result)
+
+
+async def _show_banned_users(query, ctx: BotContext, chat_id: int, extra: str, _context) -> None:
+    page_size = 8
+    try:
+        page = int(extra) if extra else 0
+    except ValueError:
+        page = 0
+    total = await ctx.db.count_group_banned_users(chat_id)
+    banned = await ctx.db.list_group_banned_users(chat_id, limit=page_size, offset=page * page_size)
+    from_sa = await _is_sa_remote(query, ctx, query.from_user.id)
+    await _safe_edit(
+        query,
+        i18n.format_banned_users_list(banned, total=total, page=page, page_size=page_size),
+        reply_markup=keyboards.banned_users_keyboard(
+            chat_id, banned, page=page, page_size=page_size, total=total, from_sa=from_sa,
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def _panel_unban_user(query, ctx: BotContext, chat_id: int, extra: str, context) -> None:
+    if not extra:
+        return
+    try:
+        target_user_id = int(extra)
+    except ValueError:
+        return
+
+    admin_id = query.from_user.id
+    is_sa_remote = await _is_sa_remote(query, ctx, admin_id)
+    if not is_sa_remote and not await can_manage_group_fast(
+        context.bot, chat_id, admin_id, ctx.db,
+    ):
+        await query.edit_message_text(i18n.MSG_NOT_GROUP_ADMIN)
+        return
+
+    ok = await unban_user_in_chat(context, chat_id, target_user_id, ctx=ctx)
+    if ok:
+        await reset_warnings_cached(ctx, chat_id, target_user_id)
+        result = i18n.MSG_MOD_UNBANNED.format(user=f"کاربر {target_user_id}")
+    else:
+        result = i18n.MSG_MOD_ALREADY_DONE
+
+    page = 0
+    page_size = 8
+    total = await ctx.db.count_group_banned_users(chat_id)
+    banned = await ctx.db.list_group_banned_users(chat_id, limit=page_size, offset=0)
+    from_sa = await _is_sa_remote(query, ctx, admin_id)
+    await _safe_edit(
+        query,
+        f"{i18n.format_banned_users_list(banned, total=total, page=page, page_size=page_size)}\n\n{result}",
+        reply_markup=keyboards.banned_users_keyboard(
+            chat_id, banned, page=page, page_size=page_size, total=total, from_sa=from_sa,
+        ),
+        parse_mode="Markdown",
+    )
 
 
 async def _show_group_panel(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
@@ -190,7 +376,7 @@ async def _set_strictness(query, ctx: BotContext, chat_id: int, extra: str, _con
 
 async def _show_action(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
     group = await ctx.db.group_to_dict(chat_id)
-    current = group.get("action_mode", "delete_flag") if group else "delete_flag"
+    current = group.get("action_mode", "keep_alert") if group else "keep_alert"
     await query.edit_message_text(
         i18n.PROMPT_ACTION,
         reply_markup=keyboards.action_mode_keyboard(chat_id, current),
@@ -505,6 +691,34 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
         await query.edit_message_text(
             i18n.PROMPT_SA_BAN_USER,
             reply_markup=keyboards.back_to_super_admin(),
+        )
+        return
+
+    if action == "sa_banned":
+        users = await ctx.db.list_globally_banned_users()
+        await _safe_edit(
+            query,
+            i18n.format_global_banned_users(users),
+            reply_markup=keyboards.global_banned_keyboard(users),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_unban_user":
+        if not extra:
+            return
+        try:
+            target_id = int(extra)
+        except ValueError:
+            return
+        await ctx.db.set_global_ban(target_id, False)
+        users = await ctx.db.list_globally_banned_users()
+        await _safe_edit(
+            query,
+            f"{i18n.MSG_USER_UNBANNED.format(user_id=target_id)}\n\n"
+            f"{i18n.format_global_banned_users(users)}",
+            reply_markup=keyboards.global_banned_keyboard(users),
+            parse_mode="Markdown",
         )
         return
 

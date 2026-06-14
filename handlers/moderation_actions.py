@@ -46,6 +46,7 @@ async def ban_user_in_chat(
     reason: str,
     *,
     revoke_messages: bool = False,
+    ctx: BotContext | None = None,
 ) -> None:
     try:
         await context.bot.ban_chat_member(
@@ -53,6 +54,8 @@ async def ban_user_in_chat(
             user_id=user_id,
             revoke_messages=revoke_messages,
         )
+        if ctx:
+            await ctx.db.set_group_ban(chat_id, user_id, True, reason)
         logger.info("Banned user %s in chat %s: %s", user_id, chat_id, reason)
     except Forbidden:
         logger.warning("Missing permissions to ban user %s in %s", user_id, chat_id)
@@ -64,6 +67,8 @@ async def ban_user_in_chat(
                 user_id=user_id,
                 revoke_messages=revoke_messages,
             )
+            if ctx:
+                await ctx.db.set_group_ban(chat_id, user_id, True, reason)
         except Exception as inner:
             logger.error("Ban retry failed: %s", inner)
     except Exception as exc:
@@ -74,6 +79,8 @@ async def unban_user_in_chat(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
     user_id: int,
+    *,
+    ctx: BotContext | None = None,
 ) -> bool:
     try:
         await context.bot.unban_chat_member(
@@ -81,6 +88,8 @@ async def unban_user_in_chat(
             user_id=user_id,
             only_if_banned=True,
         )
+        if ctx:
+            await ctx.db.set_group_ban(chat_id, user_id, False)
         logger.info("Unbanned user %s in chat %s", user_id, chat_id)
         return True
     except Forbidden:
@@ -94,10 +103,32 @@ async def unban_user_in_chat(
                 user_id=user_id,
                 only_if_banned=True,
             )
+            if ctx:
+                await ctx.db.set_group_ban(chat_id, user_id, False)
             return True
         except Exception as inner:
             logger.error("Unban retry failed: %s", inner)
             return False
     except Exception as exc:
         logger.error("Unban failed for user %s in %s: %s", user_id, chat_id, exc)
+        return False
+
+
+async def restore_message_from_audit(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    message_text: str,
+    user_label: str,
+) -> bool:
+    """Re-post deleted message content to the group."""
+    if not message_text.strip():
+        return False
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"↩️ پیام بازگردانده‌شده از {user_label}:\n\n{message_text[:3500]}",
+        )
+        return True
+    except (BadRequest, Forbidden) as exc:
+        logger.warning("Could not restore message in %s: %s", chat_id, exc)
         return False

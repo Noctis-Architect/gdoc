@@ -12,7 +12,7 @@ from telegram.ext import ContextTypes
 import i18n
 from context import BotContext
 from handlers.admin_utils import is_group_admin, is_protected_member
-from handlers.group_notifications import notify_group_ban, notify_group_warning
+from handlers.group_notifications import notify_group_ban, notify_group_delete, notify_group_warning
 from handlers.moderation_actions import ban_user_in_chat, increment_warning_cached, safe_delete_message
 
 logger = logging.getLogger(__name__)
@@ -76,8 +76,10 @@ async def try_handle_admin_reply_command(
         target_label += f" (@{target_user.username})"
 
     try:
+        audit_id = 0
         if cmd == "ban":
             await _cmd_ban(context, chat.id, target_user.id, target_msg.message_id)
+            await ctx.db.set_group_ban(chat.id, target_user.id, True, "بن دستی توسط ادمین")
             reasons = ["بن دستی توسط ادمین"]
             await notify_group_ban(context, chat.id, target_user, 0, reasons)
             result = i18n.MSG_MODCMD_BAN.format(user=target_label)
@@ -96,7 +98,9 @@ async def try_handle_admin_reply_command(
             threshold = (group or {}).get("warning_threshold", 3)
             msg_text = target_msg.text or target_msg.caption or ""
             if auto_banned:
-                await ban_user_in_chat(context, chat.id, target_user.id, "Warning threshold exceeded")
+                await ban_user_in_chat(
+                    context, chat.id, target_user.id, "Warning threshold exceeded", ctx=ctx,
+                )
                 reasons = await ctx.db.get_user_violation_reasons(chat.id, target_user.id)
                 if not reasons:
                     reasons = ["اخطار دستی توسط ادمین"]
@@ -114,7 +118,27 @@ async def try_handle_admin_reply_command(
                 )
                 result = i18n.MSG_MODCMD_WARN.format(user=target_label, count=count)
         elif cmd in ("del", "delete"):
+            reason = i18n.MSG_MODCMD_DEL_REASON
             await safe_delete_message(context, chat.id, target_msg.message_id)
+            audit_id = await ctx.db.add_audit_log(
+                chat_id=chat.id,
+                user_id=target_user.id,
+                username=target_user.username,
+                message_text=(target_msg.text or target_msg.caption or "")[:500],
+                classification="MANUAL",
+                reason=reason,
+                layer="admin",
+                action_taken="del",
+                message_id=target_msg.message_id,
+            )
+            await notify_group_delete(
+                context,
+                chat.id,
+                target_user,
+                reason,
+                target_msg.text or target_msg.caption or "",
+                audit_id,
+            )
             result = i18n.MSG_MODCMD_DEL
         elif cmd == "purge":
             await _cmd_purge(context, chat.id, target_user.id, target_msg.message_id)
@@ -132,16 +156,18 @@ async def try_handle_admin_reply_command(
         await message.reply_text(i18n.MSG_MODCMD_FAILED.format(error=str(exc)))
         return True
 
-    await ctx.db.add_audit_log(
-        chat_id=chat.id,
-        user_id=target_user.id,
-        username=target_user.username,
-        message_text=(target_msg.text or target_msg.caption or "")[:500],
-        classification="MANUAL",
-        reason=f"admin_cmd:{cmd}",
-        layer="admin",
-        action_taken=cmd,
-    )
+    if cmd not in ("del", "delete"):
+        await ctx.db.add_audit_log(
+            chat_id=chat.id,
+            user_id=target_user.id,
+            username=target_user.username,
+            message_text=(target_msg.text or target_msg.caption or "")[:500],
+            classification="MANUAL",
+            reason=f"admin_cmd:{cmd}",
+            layer="admin",
+            action_taken=cmd,
+            message_id=target_msg.message_id,
+        )
 
     await message.reply_text(result)
     try:

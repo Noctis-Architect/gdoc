@@ -47,7 +47,7 @@ class ModerationEngine:
                 is_authorized=cached.get("is_authorized", True),
                 moderation_enabled=cached.get("moderation_enabled", True),
                 strictness=cached.get("strictness", "medium"),
-                action_mode=cached.get("action_mode", "delete_flag"),
+                action_mode=cached.get("action_mode", "keep_alert"),
                 warning_threshold=cached.get("warning_threshold", 3),
                 custom_rules=cached.get("custom_rules", ""),
             )
@@ -175,6 +175,8 @@ class ModerationEngine:
         if layer1:
             if group.action_mode == "keep_alert":
                 layer1.should_delete = False
+                layer1.should_warn = False
+                layer1.should_ban = False
             return group, layer1
 
         if not message_text.strip():
@@ -191,6 +193,8 @@ class ModerationEngine:
         layer2 = await self.check_layer2(group, message_text)
         if layer2.flagged and group.action_mode == "keep_alert":
             layer2.should_delete = False
+            layer2.should_warn = False
+            layer2.should_ban = False
         return group, layer2
 
     async def invalidate_group_cache(self, chat_id: int) -> None:

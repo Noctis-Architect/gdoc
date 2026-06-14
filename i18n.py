@@ -14,8 +14,8 @@ STRICTNESS_FA = {
 }
 
 ACTION_MODE_FA = {
-    "delete_flag": "حذف پیام + ثبت در پنل",
-    "keep_alert": "نگه‌داشتن پیام + هشدار به ادمین",
+    "delete_flag": "حذف خودکار + اخطار",
+    "keep_alert": "بررسی ادمین در پیوی (پیش‌فرض)",
 }
 
 CLASSIFICATION_FA = {
@@ -138,6 +138,7 @@ BTN_THRESHOLD = "⚠️ آستانه اخطار"
 BTN_MODERATION = "🤖 moderation"
 BTN_BLACKLIST = "🚫 لیست سیاه"
 BTN_AUDIT = "📋 گزارش تخلفات"
+BTN_BANNED = "🔨 کاربران بن‌شده"
 BTN_STATS = "📊 آمار پیام‌ها"
 BTN_REFRESH = "🔄 بروزرسانی"
 BTN_BACK = "⬅️ بازگشت"
@@ -159,12 +160,18 @@ BTN_SA_MODEL = "📦 انتخاب مدل"
 BTN_SA_AUTH = "✅ مجاز کردن گروه"
 BTN_SA_BAN_GROUP = "🚫 مسدود کردن گروه"
 BTN_SA_BAN_USER = "🔨 بن کاربر/ادمین"
+BTN_SA_BANNED = "🚷 کاربران بن سراسری"
 BTN_SA_AUDIT = "📋 گزارش سراسری"
 BTN_SA_GROUPS_BACK = "⬅️ بازگشت به فهرست گروه‌ها"
 
 BTN_MOD_FORGIVE = "✅ بخشیدن (حذف اخطار)"
 BTN_MOD_BAN = "🔨 بن کردن"
 BTN_MOD_UNBAN = "🔓 آزاد کردن"
+BTN_MOD_RESTORE = "↩️ بازگرداندن پیام"
+
+BTN_REVIEW_HARM = "⚠️ مضر — اخطار بده"
+BTN_REVIEW_SAFE = "✅ غیرمضر — نادیده بگیر"
+BTN_REVIEW_DELETE = "🗑 حذف پیام"
 
 BTN_WH_POLLING = "📡 حالت Polling (پیش‌فرض)"
 BTN_WH_MANUAL = "🔗 تغییر URL دستی"
@@ -176,7 +183,7 @@ PROVIDER_COMPAT = "سازگار با OpenAI"
 # --- Callback prompts ---
 
 PROMPT_STRICTNESS = "سطح سختی moderation را انتخاب کنید:"
-PROMPT_ACTION = "برخورد با پیام‌های مشکوک:"
+PROMPT_ACTION = "برخورد با پیام‌های مشکوک:\n_پیش‌فرض: پیام حذف نمی‌شود و فقط در پیوی ادمین بررسی می‌شود._"
 PROMPT_THRESHOLD = "حداکثر تعداد اخطار قبل از بن خودکار:"
 PROMPT_RULES = (
     "قوانین سفارشی گروه را ارسال کنید.\n"
@@ -324,12 +331,88 @@ def format_global_audit(entries: list[dict]) -> str:
     for entry in entries:
         cls = classification_label(str(entry.get("classification", "")))
         preview = escape_md((entry.get("message_text") or "")[:60])
+        reason = escape_md(str(entry.get("reason") or ""))
+        action = escape_md(str(entry.get("action_taken") or ""))
         lines.append(
             f"• گروه `{entry.get('chat_id')}` — "
             f"کاربر {entry.get('user_id')} — {cls}\n"
-            f"  {preview}\n",
+            f"  {preview}\n"
+            f"  دلیل: {reason} | اقدام: {action}\n",
         )
     return "\n".join(lines)
+
+
+def format_banned_users_list(
+    banned: list[dict],
+    *,
+    total: int,
+    page: int,
+    page_size: int,
+) -> str:
+    if not banned:
+        return "🔨 **کاربران بن‌شده**\n\n_هیچ کاربر بن‌شده‌ای ثبت نشده._"
+    lines = [f"🔨 **کاربران بن‌شده** ({total} نفر)\n"]
+    start = page * page_size
+    for idx, row in enumerate(banned, start=start + 1):
+        name = escape_md(row.get("first_name") or row.get("username") or str(row["user_id"]))
+        uname = f"@{row['username']}" if row.get("username") else ""
+        reason = escape_md(row.get("ban_reason") or "—")
+        warns = row.get("warning_count", 0)
+        lines.append(
+            f"{idx}. **{name}** {uname}\n"
+            f"   ID: `{row['user_id']}` | اخطار: {warns}\n"
+            f"   دلیل: {reason}\n",
+        )
+    return "\n".join(lines)
+
+
+def format_global_banned_users(users: list[dict]) -> str:
+    if not users:
+        return "🚷 **کاربران بن سراسری**\n\n_هیچ کاربری بن سراسری نشده._"
+    lines = ["🚷 **کاربران بن سراسری**\n"]
+    for u in users:
+        name = escape_md(u.get("first_name") or u.get("username") or str(u["telegram_id"]))
+        uname = f"@{u['username']}" if u.get("username") else ""
+        lines.append(f"• **{name}** {uname} — ID: `{u['telegram_id']}`")
+    return "\n".join(lines)
+
+
+def format_admin_review_alert(
+    group_title: str,
+    user_name: str,
+    username: str | None,
+    classification: str,
+    reason: str,
+    text: str,
+) -> str:
+    uname = f"@{escape_md(username)}" if username else "ندارد"
+    cls = classification_label(classification)
+    return (
+        f"🔍 **بررسی پیام مشکوک**\n"
+        f"گروه: {escape_md(group_title)}\n"
+        f"کاربر: {escape_md(user_name)} ({uname})\n"
+        f"طبقه‌بندی: **{cls}**\n"
+        f"دلیل AI: {escape_md(reason)}\n\n"
+        f"پیام:\n_{escape_md(text[:500])}_\n\n"
+        f"_پیام در گروه حذف نشده. لطفاً مضر یا غیرمضر بودن را مشخص کنید._"
+    )
+
+
+def format_group_delete_notice(
+    user_name: str,
+    username: str | None,
+    reason: str,
+    message_preview: str,
+) -> str:
+    uname = f"@{escape_md(username)}" if username else "ندارد"
+    preview = escape_md(message_preview[:120]) if message_preview else "—"
+    return (
+        f"🗑 **پیام حذف شد**\n"
+        f"کاربر: {escape_md(user_name)} ({uname})\n"
+        f"دلیل: {escape_md(reason)}\n"
+        f"متن: _{preview}_\n\n"
+        f"_ادمین می‌تواند پیام را بازگرداند یا اخطار را ببخشد._"
+    )
 
 
 def format_group_warning_notice(
@@ -372,6 +455,10 @@ def format_group_ban_notice(
 MSG_MOD_FORGIVEN = "✅ اخطارهای {user} توسط ادمین بخشیده شد."
 MSG_MOD_BANNED = "🔨 {user} توسط ادمین بن شد."
 MSG_MOD_UNBANNED = "🔓 {user} توسط ادمین آزاد شد."
+MSG_MOD_RESTORED = "↩️ پیام {user} در گروه بازگردانده شد."
+MSG_MOD_REVIEW_HARM = "⚠️ پیام مضر تشخیص داده شد — اخطار ثبت شد."
+MSG_MOD_REVIEW_SAFE = "✅ پیام غیرمضر تشخیص داده شد — نادیده گرفته شد."
+MSG_MOD_REVIEW_DONE = "این بررسی قبلاً انجام شده است."
 MSG_MOD_NOT_GROUP_ADMIN = "⛔ فقط ادمین‌های گروه می‌توانند این کار را انجام دهند."
 MSG_MOD_ALREADY_DONE = "این اقدام قبلاً انجام شده است."
 MSG_SA_SELECT_GROUP = "👥 **گروه را برای مدیریت انتخاب کنید:**"
@@ -397,6 +484,7 @@ MSG_WEBHOOK_INVALID_URL = "آدرس URL نامعتبر است. باید با htt
 MSG_GROUP_AUTHORIZED = "✅ گروه `{chat_id}` مجاز شد."
 MSG_GROUP_BANNED = "🚫 گروه `{chat_id}` مسدود شد."
 MSG_USER_BANNED = "🔨 کاربر `{user_id}` به‌صورت سراسری بن شد."
+MSG_USER_UNBANNED = "🔓 بن سراسری کاربر `{user_id}` برداشته شد."
 MSG_ADMIN_RENEWED = (
     "✅ اشتراک ادمین `{user_id}` تمدید شد.\n"
     "انقضای جدید: **{expires}** ({days} روز)"
@@ -420,6 +508,7 @@ MSG_MODCMD_UNMUTE = "🔊 سکوت {user} برداشته شد."
 MSG_MODCMD_WARN = "⚠️ به {user} اخطار داده شد. (تعداد: {count})"
 MSG_MODCMD_WARN_BAN = "🔨 {user} پس از {count} اخطار بن شد."
 MSG_MODCMD_DEL = "🗑 پیام حذف شد."
+MSG_MODCMD_DEL_REASON = "دلیل: حذف دستی توسط ادمین"
 MSG_MODCMD_PURGE = "🧹 پیام‌های {user} پاک شد و از گروه اخراج شد."
 
 

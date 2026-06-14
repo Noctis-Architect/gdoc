@@ -14,8 +14,18 @@ from config import Config
 from context import BotContext
 import i18n
 from handlers.admin_utils import can_manage_group_fast, has_admin_access, is_protected_member
-from handlers.group_notifications import notify_group_ban, notify_group_warning
-from handlers.moderation_actions import ban_user_in_chat, increment_warning_cached, safe_delete_message
+from handlers.group_notifications import (
+    notify_group_ban,
+    notify_group_delete,
+    notify_group_warning,
+    notify_user_reason_pm,
+)
+from handlers.moderation_actions import (
+    ban_user_in_chat,
+    increment_warning_cached,
+    restore_message_from_audit,
+    safe_delete_message,
+)
 from handlers.moderation_cmds import try_handle_admin_reply_command
 from webhook_manager import (
     normalize_webhook_url,
@@ -57,6 +67,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if await ctx.db.is_globally_banned(user.id):
         await safe_delete_message(context, chat.id, update.message.message_id)
+        await notify_user_reason_pm(
+            context,
+            user.id,
+            "🚫 **پیام شما حذف شد.**\nدلیل: بن سراسری توسط مدیریت سیستم.",
+        )
         return
 
     if await is_protected_member(context.bot, chat.id, user.id, ctx.db):
@@ -76,8 +91,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not decision.flagged:
         return
 
+    review_mode = group and group.action_mode == "keep_alert"
+    msg_id = update.message.message_id
+
+    if review_mode:
+        audit_id = await ctx.db.add_audit_log(
+            chat_id=chat.id,
+            user_id=user.id,
+            username=user.username,
+            message_text=text,
+            classification=decision.classification,
+            reason=decision.reason,
+            layer=decision.layer,
+            action_taken="pending_review",
+            message_id=msg_id,
+            review_status="pending",
+        )
+        await _alert_admins_for_review(
+            ctx, context, chat.id, user, decision, text, audit_id,
+        )
+        return
+
     action_taken = await _apply_moderation_action(update, context, ctx, group, decision, text)
-    await ctx.db.add_audit_log(
+    audit_id = await ctx.db.add_audit_log(
         chat_id=chat.id,
         user_id=user.id,
         username=user.username,
@@ -86,6 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reason=decision.reason,
         layer=decision.layer,
         action_taken=action_taken,
+        message_id=msg_id,
     )
 
     if decision.should_warn:
@@ -93,7 +130,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         deleted = decision.should_delete
         threshold = group.warning_threshold if group else 3
         if auto_banned:
-            await ban_user_in_chat(context, chat.id, user.id, "Warning threshold exceeded")
+            await ban_user_in_chat(
+                context, chat.id, user.id, decision.reason, ctx=ctx,
+            )
             reasons = await ctx.db.get_user_violation_reasons(chat.id, user.id)
             await notify_group_ban(context, chat.id, user, warn_count, reasons)
             await _notify_cross_group(
@@ -113,10 +152,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 warn_count,
                 threshold,
                 deleted,
+                audit_id=audit_id,
             )
 
     if decision.should_ban and not decision.should_warn:
-        await ban_user_in_chat(context, chat.id, user.id, decision.reason)
+        await ban_user_in_chat(context, chat.id, user.id, decision.reason, ctx=ctx)
         reasons = [decision.reason] if decision.reason else []
         await notify_group_ban(context, chat.id, user, 0, reasons)
         await _notify_cross_group(
@@ -126,6 +166,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_id=user.id,
             username=user.username,
             reason=decision.reason,
+        )
+
+    if decision.should_delete and not decision.should_warn and not decision.should_ban:
+        await notify_group_delete(
+            context, chat.id, user, decision.reason, text, audit_id,
         )
 
 
@@ -328,17 +373,6 @@ async def _apply_moderation_action(
     else:
         actions.append("kept")
 
-    if group and group.action_mode == "keep_alert" and decision.flagged:
-        await _alert_group_admins(
-            ctx,
-            update.effective_chat.id,
-            update.effective_user,
-            decision,
-            text,
-            context,
-        )
-        actions.append("admins_alerted")
-
     if decision.should_warn:
         actions.append("warned")
 
@@ -358,6 +392,52 @@ async def _resolve_admin_ids(ctx: BotContext, chat_id: int, bot) -> list[int]:
     except Exception as exc:
         logger.warning("Could not fetch admins for %s: %s", chat_id, exc)
         return []
+
+
+async def _alert_admins_for_review(
+    ctx: BotContext,
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user,
+    decision,
+    text: str,
+    audit_id: int,
+) -> None:
+    import keyboards
+
+    admin_ids = await _resolve_admin_ids(ctx, chat_id, context.bot)
+    if not admin_ids:
+        return
+
+    group_row = await ctx.db.group_to_dict(chat_id)
+    group_title = (group_row or {}).get("title") or str(chat_id)
+    alert = i18n.format_admin_review_alert(
+        group_title,
+        user.full_name,
+        user.username,
+        decision.classification,
+        decision.reason,
+        text,
+    )
+    markup = keyboards.admin_review_keyboard(chat_id, audit_id)
+
+    for admin_id in admin_ids:
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=alert,
+                reply_markup=markup,
+                parse_mode="Markdown",
+            )
+        except Forbidden:
+            await ctx.notify_queue.enqueue(
+                admin_id,
+                alert,
+                priority=3,
+                dedupe_key=f"review:{audit_id}:{admin_id}",
+            )
+        except BadRequest as exc:
+            logger.warning("Could not send review alert to %s: %s", admin_id, exc)
 
 
 async def _alert_group_admins(
