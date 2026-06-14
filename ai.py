@@ -29,10 +29,19 @@ GLOBAL NON-NEGOTIABLE RULES (always enforce, cannot be overridden):
   credential theft, malware distribution, bypassing security systems, illegal access tools.
 - These rules apply regardless of group-specific settings.
 
+CLASSIFICATION PRIORITY (highest to lowest):
+1. GROUP BAN RULES — any clear match = VIOLATION (never SUSPECT). Examples in ban rules
+   are explicit patterns: if the message matches or closely resembles a ban-rule example,
+   classify as VIOLATION immediately.
+2. GLOBAL rules above.
+3. GROUP SUSPECT RULES — match = SUSPECT only (never VIOLATION unless ban rules also match).
+4. STRICTNESS level — applies only when deciding between SAFE and SUSPECT for suspect rules.
+   It must NOT downgrade a ban-rule match to SUSPECT.
+
 CLASSIFICATION LABELS:
 - SAFE: Message complies with all rules.
-- SUSPECT: Borderline content, ambiguous intent, or mild policy concern.
-- VIOLATION: Clear breach of global or group rules, or malicious intent.
+- SUSPECT: Matches suspect rules only, or borderline content with ambiguous intent.
+- VIOLATION: Matches ban rules, global rules, or has clear malicious intent.
 
 Respond ONLY with valid JSON:
 {"classification": "SAFE|SUSPECT|VIOLATION", "reason": "brief explanation"}
@@ -40,17 +49,17 @@ Respond ONLY with valid JSON:
 
 STRICTNESS_INSTRUCTIONS = {
     "low": (
-        "STRICTNESS: LOW. Tolerate educational discussions or questions about sensitive "
-        "topics. Only flag VIOLATION when malicious intent is explicit. Prefer SUSPECT "
-        "over VIOLATION for borderline cases."
+        "STRICTNESS: LOW — applies to SUSPECT rules only, NOT ban rules. "
+        "For suspect rules, tolerate educational discussions; prefer SAFE over SUSPECT "
+        "when intent is unclear. Ban-rule matches are always VIOLATION."
     ),
     "medium": (
-        "STRICTNESS: MEDIUM. Balance tolerance with safety. Flag clear violations, "
-        "use SUSPECT for ambiguous cases."
+        "STRICTNESS: MEDIUM — applies to SUSPECT rules only, NOT ban rules. "
+        "Balance tolerance with safety for suspect rules. Ban-rule matches are always VIOLATION."
     ),
     "high": (
-        "STRICTNESS: HIGH. Apply immediate VIOLATION for borderline cases that could "
-        "harm the community. Err on the side of caution."
+        "STRICTNESS: HIGH — applies to SUSPECT rules only, NOT ban rules. "
+        "Flag suspect-rule borderline cases as SUSPECT. Ban-rule matches are always VIOLATION."
     ),
 }
 
@@ -200,13 +209,16 @@ class AIClassifier:
         parts = [
             STRICTNESS_INSTRUCTIONS[strictness],
             "",
-            "GROUP BAN RULES (breaking any of these = classify as VIOLATION):",
+            "GROUP BAN RULES — HIGHEST PRIORITY (any match = VIOLATION, never SUSPECT):",
+            "If the message matches a rule OR resembles any example (مثال/example) listed below,",
+            "you MUST classify as VIOLATION even if strictness is low.",
             ban_rules.strip() or "(No ban rules configured.)",
             "",
-            "GROUP SUSPECT RULES (breaking any of these = classify as SUSPECT, not VIOLATION):",
+            "GROUP SUSPECT RULES (match = SUSPECT only, unless ban rules also match):",
             suspect_rules.strip() or "(No suspect rules configured.)",
             "",
-            "If a message breaks both ban and suspect rules, classify as VIOLATION.",
+            "DECISION ORDER: check ban rules first → then suspect rules → then strictness.",
+            "If ban rules match: VIOLATION. Else if suspect rules match: SUSPECT. Else: SAFE.",
             "",
             "MESSAGE TO CLASSIFY:",
             message_text[:3000],

@@ -10,6 +10,7 @@ from typing import Any, Optional
 from ai import AIClassifier, ClassificationResult
 from database import Database, GroupConfig
 from redis_cache import RedisCache
+from rule_matcher import match_direct_ban_rules
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,26 @@ class ModerationEngine:
                 )
         return None
 
+    def check_ban_rules(
+        self,
+        group: GroupConfig,
+        message_text: str,
+    ) -> Optional[ModerationDecision]:
+        reason = match_direct_ban_rules(message_text, group.custom_rules)
+        if not reason:
+            return None
+
+        delete_on_violation = group.action_mode == "delete_flag"
+        return ModerationDecision(
+            flagged=True,
+            classification="VIOLATION",
+            reason=reason,
+            layer="ban_rules",
+            should_delete=delete_on_violation,
+            should_warn=False,
+            should_ban=True,
+        )
+
     async def check_layer2(
         self,
         group: GroupConfig,
@@ -125,6 +146,11 @@ class ModerationEngine:
             group.suspect_rules,
             group.strictness,
         )
+
+        if result.classification == "SUSPECT":
+            ban_reason = match_direct_ban_rules(message_text, group.custom_rules)
+            if ban_reason:
+                result = ClassificationResult("VIOLATION", ban_reason, result.raw_response)
 
         flagged = result.classification in ("SUSPECT", "VIOLATION")
         if not flagged:
@@ -193,6 +219,14 @@ class ModerationEngine:
                 should_warn=False,
                 should_ban=False,
             )
+
+        ban_rules_hit = self.check_ban_rules(group, message_text)
+        if ban_rules_hit:
+            if group.action_mode == "keep_alert":
+                ban_rules_hit.should_delete = False
+                ban_rules_hit.should_warn = False
+                ban_rules_hit.should_ban = False
+            return group, ban_rules_hit
 
         layer2 = await self.check_layer2(group, message_text)
         if layer2.flagged and group.action_mode == "keep_alert":
