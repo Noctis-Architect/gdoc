@@ -130,27 +130,43 @@ def build_application() -> Application:
 
 
 def main() -> None:
-    application = build_application()
+    try:
+        application = build_application()
+    except ValueError as exc:
+        logger.error("Configuration error: %s", exc)
+        sys.exit(1)
+    except Exception:
+        logger.exception("Failed to build application")
+        sys.exit(1)
 
-    if Config.USE_WEBHOOK:
-        if not Config.WEBHOOK_URL:
-            logger.error("USE_WEBHOOK=true but WEBHOOK_URL is empty")
-            sys.exit(1)
+    try:
+        if Config.USE_WEBHOOK:
+            if not Config.WEBHOOK_URL:
+                logger.error("USE_WEBHOOK=true but WEBHOOK_URL is empty")
+                sys.exit(1)
 
-        webhook_url = Config.WEBHOOK_URL.rstrip("/") + Config.WEBHOOK_PATH
-        logger.info("Starting webhook mode on %s:%s%s", Config.WEBHOOK_HOST, Config.WEBHOOK_PORT, Config.WEBHOOK_PATH)
+            webhook_url = Config.WEBHOOK_URL.rstrip("/") + Config.WEBHOOK_PATH
+            logger.info(
+                "Starting webhook mode on %s:%s%s",
+                Config.WEBHOOK_HOST,
+                Config.WEBHOOK_PORT,
+                Config.WEBHOOK_PATH,
+            )
 
-        application.run_webhook(
-            listen=Config.WEBHOOK_HOST,
-            port=Config.WEBHOOK_PORT,
-            url_path=Config.WEBHOOK_PATH.lstrip("/"),
-            webhook_url=webhook_url,
-            secret_token=Config.WEBHOOK_SECRET or None,
-            drop_pending_updates=True,
-        )
-    else:
-        logger.info("Starting polling mode")
-        application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+            application.run_webhook(
+                listen=Config.WEBHOOK_HOST,
+                port=Config.WEBHOOK_PORT,
+                url_path=Config.WEBHOOK_PATH.lstrip("/"),
+                webhook_url=webhook_url,
+                secret_token=Config.WEBHOOK_SECRET or None,
+                drop_pending_updates=True,
+            )
+        else:
+            logger.info("Starting polling mode")
+            application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    except Exception:
+        logger.exception("Failed to start gdoc bot")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

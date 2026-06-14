@@ -81,30 +81,95 @@ validate_super_admin_id() {
     return 0
 }
 
+read_env_value() {
+    local key="$1"
+    local file="$2"
+    local line=""
+    if [[ ! -f "${file}" ]]; then
+        return 0
+    fi
+    line="$(grep -E "^${key}=" "${file}" 2>/dev/null | tail -1 || true)"
+    if [[ -n "${line}" ]]; then
+        printf '%s' "${line#*=}"
+    fi
+}
+
+ssl_certificate_exists() {
+    local domain="$1"
+    [[ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" \
+        && -f "/etc/letsencrypt/live/${domain}/privkey.pem" ]]
+}
+
+is_existing_install() {
+    [[ -f "${ENV_FILE}" ]] \
+        || [[ -d "${VENV_DIR}" ]] \
+        || systemctl cat "${SERVICE_NAME}.service" &>/dev/null
+}
+
+load_existing_config() {
+    if [[ ! -f "${ENV_FILE}" ]]; then
+        return 0
+    fi
+
+    log_info "نصب قبلی شناسایی شد — تنظیمات از ${ENV_FILE} بارگذاری می‌شود."
+    BOT_TOKEN="${BOT_TOKEN:-$(read_env_value BOT_TOKEN "${ENV_FILE}")}"
+    SUPER_ADMIN_ID="${SUPER_ADMIN_ID:-$(read_env_value SUPER_ADMIN_ID "${ENV_FILE}")}"
+    USE_WEBHOOK="${USE_WEBHOOK:-$(read_env_value USE_WEBHOOK "${ENV_FILE}")}"
+
+    local existing_url=""
+    existing_url="$(read_env_value WEBHOOK_URL "${ENV_FILE}")"
+    if [[ -z "${WEBHOOK_URL:-}" && -n "${existing_url}" ]]; then
+        WEBHOOK_URL="${existing_url}"
+    fi
+    if [[ -z "${WEBHOOK_DOMAIN:-}" && -n "${WEBHOOK_URL}" ]]; then
+        if [[ "${WEBHOOK_URL}" =~ ^https://([^/]+) ]]; then
+            WEBHOOK_DOMAIN="${BASH_REMATCH[1]}"
+        fi
+    fi
+    if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" && -z "${WEBHOOK_URL:-}" ]]; then
+        WEBHOOK_URL="https://${WEBHOOK_DOMAIN}"
+    fi
+}
+
 collect_config() {
     USE_WEBHOOK="${USE_WEBHOOK:-false}"
     WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN:-}"
     SSL_EMAIL="${SSL_EMAIL:-}"
 
+    load_existing_config
+
     if [[ -n "${BOT_TOKEN:-}" && -n "${SUPER_ADMIN_ID:-}" ]]; then
-        log_info "تنظیمات از متغیرهای محیطی خوانده شد."
+        log_info "تنظیمات از متغیرهای محیطی یا نصب قبلی خوانده شد."
         if ! validate_super_admin_id "${SUPER_ADMIN_ID}"; then
             exit 1
         fi
         if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" ]]; then
             WEBHOOK_URL="https://${WEBHOOK_DOMAIN}"
+            if ssl_certificate_exists "${WEBHOOK_DOMAIN}"; then
+                log_info "گواهی SSL برای ${WEBHOOK_DOMAIN} از قبل موجود است — دریافت مجدد لازم نیست."
+            fi
         else
             WEBHOOK_URL=""
             USE_WEBHOOK="false"
         fi
-        return 0
+        if [[ "${USE_WEBHOOK}" != "true" ]]; then
+            return 0
+        fi
+        if [[ -n "${WEBHOOK_DOMAIN}" ]]; then
+            if ssl_certificate_exists "${WEBHOOK_DOMAIN}"; then
+                return 0
+            fi
+            if [[ -n "${SSL_EMAIL:-}" ]]; then
+                return 0
+            fi
+        fi
     fi
 
     echo
     log_info "--- تنظیمات ربات ---"
-    prompt_value BOT_TOKEN "توکن ربات تلگرام (از @BotFather)"
+    prompt_value BOT_TOKEN "توکن ربات تلگرام (از @BotFather)" "${BOT_TOKEN:-}"
     while true; do
-        prompt_value SUPER_ADMIN_ID "شناسه عددی سوپرادمین (از @userinfobot)"
+        prompt_value SUPER_ADMIN_ID "شناسه عددی سوپرادمین (از @userinfobot)" "${SUPER_ADMIN_ID:-}"
         if validate_super_admin_id "${SUPER_ADMIN_ID}"; then
             break
         fi
@@ -113,15 +178,20 @@ collect_config() {
     echo
     log_info "--- دامنه و SSL (Webhook) ---"
     log_info "تنظیمات AI (Base URL و کلید API) بعداً از پنل /superadmin در تلگرام انجام می‌شود."
-    prompt_value USE_WEBHOOK "از دامنه با SSL استفاده شود؟ (true/false)" "true"
+    prompt_value USE_WEBHOOK "از دامنه با SSL استفاده شود؟ (true/false)" "${USE_WEBHOOK:-true}"
 
     if [[ "${USE_WEBHOOK}" == "true" ]]; then
-        prompt_value WEBHOOK_DOMAIN "دامنه وب‌هوک (مثال: bot.example.com)"
-        prompt_value SSL_EMAIL "ایمیل برای گواهی SSL (Let's Encrypt)"
+        prompt_value WEBHOOK_DOMAIN "دامنه وب‌هوک (مثال: bot.example.com)" "${WEBHOOK_DOMAIN:-}"
+        if ssl_certificate_exists "${WEBHOOK_DOMAIN}"; then
+            log_info "گواهی SSL برای ${WEBHOOK_DOMAIN} از قبل موجود است — دریافت مجدد انجام نمی‌شود."
+            SSL_EMAIL=""
+        else
+            prompt_value SSL_EMAIL "ایمیل برای گواهی SSL (Let's Encrypt)" "${SSL_EMAIL:-}"
+            log_info "SSL خودکار با Let's Encrypt (فقط دامنه + ایمیل لازم است)."
+            log_warn "قبل از ادامه: رکورد A دامنه باید به IP همین سرور اشاره کند."
+            log_warn "اگر Cloudflare دارید، موقتاً پروکسی (ابر نارنجی) را خاموش کنید."
+        fi
         WEBHOOK_URL="https://${WEBHOOK_DOMAIN}"
-        log_info "SSL خودکار با Let's Encrypt (فقط دامنه + ایمیل لازم است)."
-        log_warn "قبل از ادامه: رکورد A دامنه باید به IP همین سرور اشاره کند."
-        log_warn "اگر Cloudflare دارید، موقتاً پروکسی (ابر نارنجی) را خاموش کنید."
     else
         WEBHOOK_DOMAIN=""
         WEBHOOK_URL=""
@@ -212,7 +282,20 @@ update_paths() {
     DATA_DIR="${INSTALL_DIR}/data"
 }
 
+system_packages_ready() {
+    command -v python3 >/dev/null 2>&1 \
+        && command -v git >/dev/null 2>&1 \
+        && command -v curl >/dev/null 2>&1 \
+        && ( systemctl is-active --quiet redis-server 2>/dev/null \
+            || systemctl is-active --quiet redis 2>/dev/null )
+}
+
 install_system_packages() {
+    if system_packages_ready; then
+        log_info "بسته‌های سیستمی از قبل نصب و فعال هستند — به‌روزرسانی کامل رد شد."
+        return 0
+    fi
+
     log_info "Updating system packages..."
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -y
@@ -233,8 +316,12 @@ install_system_packages() {
 }
 
 setup_venv() {
-    log_info "Creating Python virtual environment..."
-    python3 -m venv "${VENV_DIR}"
+    if [[ -d "${VENV_DIR}" && -x "${VENV_DIR}/bin/python" ]]; then
+        log_info "محیط مجازی از قبل وجود دارد — فقط وابستگی‌ها به‌روز می‌شوند."
+    else
+        log_info "Creating Python virtual environment..."
+        python3 -m venv "${VENV_DIR}"
+    fi
     # shellcheck disable=SC1091
     source "${VENV_DIR}/bin/activate"
     pip install --upgrade pip wheel
@@ -247,8 +334,15 @@ write_env_file() {
     local super_admin_id="$2"
     local use_webhook="$3"
     local webhook_url="$4"
+    local preserved=""
 
     mkdir -p "${DATA_DIR}"
+
+    if [[ -f "${ENV_FILE}" ]]; then
+        preserved="$(grep -E '^(AI_|POSTGRES_|REDIS_PREFIX|CACHE_TTL|WEBHOOK_SECRET|AI_CONCURRENCY|DB_WRITE|NOTIFY_)' \
+            "${ENV_FILE}" 2>/dev/null || true)"
+        log_info "تنظیمات سفارشی قبلی (.env) حفظ می‌شوند."
+    fi
 
     cat > "${ENV_FILE}" <<EOF
 BOT_TOKEN=${bot_token}
@@ -266,8 +360,25 @@ LOG_LEVEL=INFO
 DATA_DIR=${DATA_DIR}
 EOF
 
+    if [[ -n "${preserved}" ]]; then
+        {
+            echo
+            echo "# Preserved from previous install"
+            printf '%s\n' "${preserved}"
+        } >> "${ENV_FILE}"
+    fi
+
     chmod 600 "${ENV_FILE}"
     log_info "Environment file written to ${ENV_FILE}"
+}
+
+fix_ownership() {
+    if [[ -z "${CURRENT_USER}" || "${CURRENT_USER}" == "root" ]]; then
+        return 0
+    fi
+
+    log_info "تنظیم مالکیت فایل‌ها برای کاربر ${CURRENT_USER}..."
+    chown -R "${CURRENT_USER}:${CURRENT_USER}" "${INSTALL_DIR}"
 }
 
 create_systemd_service() {
@@ -305,6 +416,11 @@ EOF
 }
 
 install_ssl_packages() {
+    if command -v nginx >/dev/null 2>&1 && command -v certbot >/dev/null 2>&1; then
+        log_info "nginx و certbot از قبل نصب هستند — رد شد."
+        return 0
+    fi
+
     log_info "نصب nginx و certbot..."
     if command -v apt-get >/dev/null 2>&1; then
         apt-get update -y
@@ -410,12 +526,18 @@ setup_ssl_renewal() {
     systemctl enable certbot.timer 2>/dev/null || true
     systemctl start certbot.timer 2>/dev/null || true
 
+    local hook="/etc/letsencrypt/renewal-hooks/deploy/gdoc-nginx-reload.sh"
+    if [[ -x "${hook}" ]]; then
+        log_info "قلاب تمدید SSL از قبل تنظیم شده — رد شد."
+        return 0
+    fi
+
     mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-    cat > /etc/letsencrypt/renewal-hooks/deploy/gdoc-nginx-reload.sh <<'HOOK'
+    cat > "${hook}" <<'HOOK'
 #!/bin/bash
 nginx -t && systemctl reload nginx
 HOOK
-    chmod +x /etc/letsencrypt/renewal-hooks/deploy/gdoc-nginx-reload.sh
+    chmod +x "${hook}"
 }
 
 setup_webhook_ssl() {
@@ -432,12 +554,23 @@ setup_webhook_ssl() {
     log_info "راه‌اندازی nginx + SSL برای ${domain}..."
     install_ssl_packages
     write_nginx_config "${domain}" "${local_port}" "${webhook_path}"
-    obtain_ssl_certificate "${domain}" "${email}"
-    write_nginx_config "${domain}" "${local_port}" "${webhook_path}"
+
+    if ssl_certificate_exists "${domain}"; then
+        log_info "گواهی SSL موجود است — certbot اجرا نمی‌شود."
+    else
+        if [[ -z "${email}" ]]; then
+            log_error "برای دریافت SSL اولیه، ایمیل Let's Encrypt لازم است."
+            log_error "SSL_EMAIL=you@example.com sudo bash install.sh"
+            exit 1
+        fi
+        obtain_ssl_certificate "${domain}" "${email}"
+        write_nginx_config "${domain}" "${local_port}" "${webhook_path}"
+    fi
+
     systemctl reload nginx
     setup_ssl_renewal
 
-    log_info "SSL فعال شد: https://${domain}${webhook_path}"
+    log_info "SSL فعال است: https://${domain}${webhook_path}"
 }
 
 print_summary() {
@@ -481,6 +614,11 @@ main() {
     require_root_for_systemd
     resolve_install_dir
     update_paths
+
+    if is_existing_install; then
+        log_info "نصب قبلی شناسایی شد — فقط بخش‌های لازم به‌روزرسانی می‌شوند."
+    fi
+
     install_system_packages
 
     BOT_TOKEN="${BOT_TOKEN:-}"
@@ -491,10 +629,11 @@ main() {
     setup_venv
     write_env_file "${BOT_TOKEN}" "${SUPER_ADMIN_ID}" "${USE_WEBHOOK}" "${WEBHOOK_URL}"
 
-    if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" && -n "${SSL_EMAIL}" ]]; then
-        setup_webhook_ssl "${WEBHOOK_DOMAIN}" "${SSL_EMAIL}"
+    if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" ]]; then
+        setup_webhook_ssl "${WEBHOOK_DOMAIN}" "${SSL_EMAIL:-}"
     fi
 
+    fix_ownership
     create_systemd_service
     print_summary
 }
