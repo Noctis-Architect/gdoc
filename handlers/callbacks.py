@@ -9,8 +9,14 @@ from telegram.ext import ContextTypes
 
 import i18n
 import keyboards
+from config import Config
 from context import BotContext
 from handlers.commands import _user_can_manage_group
+from webhook_manager import (
+    normalize_webhook_url,
+    update_env_file,
+    validate_webhook_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -196,11 +202,146 @@ async def _show_audit(query, ctx: BotContext, chat_id: int, _extra: str, _contex
 
 
 async def _handle_super_admin(action, query, ctx: BotContext, context, extra: str) -> None:
+    user_id = query.from_user.id
+
     if action == "sa_panel":
         await query.edit_message_text(
             i18n.MSG_SUPER_PANEL,
             reply_markup=keyboards.super_admin_panel(),
             parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_ai":
+        settings = await ctx.db.get_ai_settings()
+        configured = await ctx.db.is_ai_configured()
+        await query.edit_message_text(
+            i18n.format_ai_settings(settings, configured),
+            reply_markup=keyboards.ai_settings_panel(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_provider":
+        current = await ctx.db.get_ai_provider()
+        await query.edit_message_text(
+            "پرووایدر AI را انتخاب کنید:",
+            reply_markup=keyboards.provider_keyboard(current),
+        )
+        return
+
+    if action == "sa_set_provider":
+        if extra not in ("openai", "gemini", "openai_compat"):
+            return
+        await ctx.db.set_ai_provider(extra)
+        default_url = ctx.ai.get_default_base_url(extra)
+        if extra != "openai_compat":
+            await ctx.db.set_ai_base_url(default_url)
+        await ctx.refresh_ai_config()
+        await query.edit_message_text(
+            i18n.MSG_PROVIDER_UPDATED.format(provider=i18n.provider_label(extra)),
+            reply_markup=keyboards.back_to_ai_settings(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_baseurl":
+        ctx.pending_inputs[user_id] = {"type": "sa_baseurl"}
+        current = await ctx.db.get_ai_base_url()
+        preview = current or ctx.ai.get_default_base_url(await ctx.db.get_ai_provider())
+        await query.edit_message_text(
+            i18n.PROMPT_SA_BASEURL + f"\n\nفعلی: `{preview}`",
+            reply_markup=keyboards.back_to_ai_settings(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_model":
+        await ctx.refresh_ai_config()
+        models, error = await ctx.ai.list_models()
+        if error:
+            await query.edit_message_text(
+                i18n.MSG_MODEL_LIST_ERROR.format(error=error),
+                reply_markup=keyboards.back_to_ai_settings(),
+            )
+            return
+        if not models:
+            await query.edit_message_text(
+                i18n.MSG_MODEL_LIST_EMPTY,
+                reply_markup=keyboards.back_to_ai_settings(),
+            )
+            return
+        ctx.model_cache[user_id] = models
+        current = await ctx.db.get_ai_model()
+        header = f"مدل AI را انتخاب کنید ({len(models)} مدل):\nفعلی: `{current}`"
+        await query.edit_message_text(
+            header,
+            reply_markup=keyboards.model_keyboard(models, page=0),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_model_page":
+        models = ctx.model_cache.get(user_id, [])
+        if not models:
+            await query.edit_message_text(
+                i18n.MSG_MODEL_LIST_EMPTY,
+                reply_markup=keyboards.back_to_ai_settings(),
+            )
+            return
+        try:
+            page = int(extra)
+        except ValueError:
+            page = 0
+        current = await ctx.db.get_ai_model()
+        await query.edit_message_text(
+            f"مدل AI را انتخاب کنید ({len(models)} مدل):\nفعلی: `{current}`",
+            reply_markup=keyboards.model_keyboard(models, page=page),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_set_model":
+        models = ctx.model_cache.get(user_id, [])
+        try:
+            idx = int(extra)
+            model = models[idx]
+        except (ValueError, IndexError):
+            return
+        await ctx.db.set_ai_model(model)
+        await ctx.refresh_ai_config()
+        await query.edit_message_text(
+            i18n.MSG_MODEL_UPDATED.format(model=model),
+            reply_markup=keyboards.back_to_ai_settings(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_webhook":
+        settings = await ctx.db.get_webhook_settings()
+        await query.edit_message_text(
+            i18n.format_webhook_settings(settings),
+            reply_markup=keyboards.webhook_panel(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_wh_polling":
+        await ctx.db.set_use_webhook(False)
+        await ctx.db.set_webhook_url("")
+        update_env_file(Config.ENV_FILE, {"USE_WEBHOOK": "false", "WEBHOOK_URL": ""})
+        await query.edit_message_text(
+            i18n.MSG_WEBHOOK_POLLING,
+            reply_markup=keyboards.back_to_super_admin(),
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "sa_wh_manual":
+        ctx.pending_inputs[user_id] = {"type": "sa_webhook_url"}
+        await query.edit_message_text(
+            i18n.PROMPT_SA_WEBHOOK_URL,
+            reply_markup=keyboards.back_to_super_admin(),
         )
         return
 
@@ -226,7 +367,7 @@ async def _handle_super_admin(action, query, ctx: BotContext, context, extra: st
         ctx.pending_inputs[query.from_user.id] = {"type": "sa_apikey"}
         await query.edit_message_text(
             i18n.PROMPT_SA_APIKEY,
-            reply_markup=keyboards.back_to_super_admin(),
+            reply_markup=keyboards.back_to_ai_settings(),
         )
         return
 

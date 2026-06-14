@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ai import AIClassifier
+
 STRICTNESS_FA = {
     "low": "کم",
     "medium": "متوسط",
@@ -55,7 +57,8 @@ def authorized_status(authorized: bool) -> str:
 MSG_START_SUPER = (
     "👋 به **gdoc** (دکتر گروه) خوش آمدید.\n"
     "شما مالک سیستم هستید.\n"
-    "برای پنل کنترل سراسری از /superadmin استفاده کنید."
+    "برای پنل کنترل سراسری از /superadmin استفاده کنید.\n\n"
+    "⚙️ ابتدا از پنل، **تنظیمات AI** (پرووایدر، کلید API و مدل) را پیکربندی کنید."
 )
 
 MSG_START_USER = (
@@ -115,11 +118,23 @@ BTN_BL_REMOVE = "➖ حذف الگو"
 
 BTN_SA_STATS = "📊 آمار سراسری"
 BTN_SA_GROUPS = "👥 همه گروه‌ها"
-BTN_SA_APIKEY = "🔑 تغییر کلید AI"
+BTN_SA_AI = "🤖 تنظیمات AI"
+BTN_SA_WEBHOOK = "🌐 Webhook / SSL"
+BTN_SA_APIKEY = "🔑 کلید API"
+BTN_SA_PROVIDER = "🏷 پرووایدر AI"
+BTN_SA_BASEURL = "🔗 Base URL"
+BTN_SA_MODEL = "📦 انتخاب مدل"
 BTN_SA_AUTH = "✅ مجاز کردن گروه"
 BTN_SA_BAN_GROUP = "🚫 مسدود کردن گروه"
 BTN_SA_BAN_USER = "🔨 بن کاربر/ادمین"
 BTN_SA_AUDIT = "📋 گزارش سراسری"
+
+BTN_WH_POLLING = "📡 حالت Polling (پیش‌فرض)"
+BTN_WH_MANUAL = "🔗 تغییر URL دستی"
+
+PROVIDER_OPENAI = "OpenAI"
+PROVIDER_GEMINI = "Google Gemini"
+PROVIDER_COMPAT = "سازگار با OpenAI"
 
 # --- Callback prompts ---
 
@@ -135,7 +150,14 @@ PROMPT_BL_KEYWORD = "کلمه یا عبارت را برای لیست سیاه ا
 PROMPT_BL_REGEX = "الگوی Regex را برای لیست سیاه ارسال کنید."
 PROMPT_BL_REMOVE = "متن دقیق الگویی که می‌خواهید حذف شود را ارسال کنید."
 
-PROMPT_SA_APIKEY = "کلید API جدید OpenAI/Gemini را به‌صورت پیام متنی ارسال کنید."
+PROMPT_SA_APIKEY = "کلید API پرووایدر را به‌صورت پیام متنی ارسال کنید."
+PROMPT_SA_BASEURL = (
+    "Base URL پرووایدر را ارسال کنید.\n"
+    "مثال OpenAI: https://api.openai.com/v1\n"
+    "مثال Gemini: https://generativelanguage.googleapis.com/v1beta\n"
+    "برای پرووایderهای سازگار با OpenAI، آدرس API خود را وارد کنید."
+)
+PROMPT_SA_WEBHOOK_URL = "آدرس عمومی HTTPS وب‌هوک را ارسال کنید (مثلاً https://bot.example.com)."
 PROMPT_SA_AUTH = "شناسه عددی گروه را برای مجاز کردن ارسال کنید (مثلاً -1001234567890)."
 PROMPT_SA_BAN_GROUP = "شناسه عددی گروه را برای مسدود کردن ارسال کنید."
 PROMPT_SA_BAN_USER = "شناسه عددی کاربر تلگرام را برای بن سراسری ارسال کنید."
@@ -215,12 +237,58 @@ MSG_RULES_UPDATED = "✅ قوانین سفارشی ذخیره شد."
 MSG_KEYWORD_ADDED = "✅ کلمه اضافه شد: `{text}`"
 MSG_REGEX_ADDED = "✅ Regex اضافه شد: `{text}`"
 MSG_PATTERN_REMOVED = "✅ الگو حذف شد: `{text}`"
-MSG_APIKEY_UPDATED = "✅ کلید API سراسری بروزرسانی شد."
+MSG_APIKEY_UPDATED = "✅ کلید API بروزرسانی شد."
+MSG_PROVIDER_UPDATED = "✅ پرووایدر AI به **{provider}** تغییر کرد."
+MSG_BASEURL_UPDATED = "✅ Base URL ذخیره شد: `{url}`"
+MSG_MODEL_UPDATED = "✅ مدل AI به `{model}` تغییر کرد."
+MSG_MODEL_LIST_ERROR = "❌ خطا در دریافت لیست مدل‌ها:\n{error}"
+MSG_MODEL_LIST_EMPTY = "❌ مدلی یافت نشد. ابتدا کلید API و Base URL را تنظیم کنید."
+MSG_AI_NOT_CONFIGURED = "⚠️ AI هنوز پیکربندی نشده. کلید API و مدل را تنظیم کنید."
+MSG_WEBHOOK_POLLING = "✅ حالت Polling فعال شد. سرویس را ری‌استارت کنید:\n`sudo systemctl restart tg_moderator`"
+MSG_WEBHOOK_URL_SAVED = "✅ URL وب‌هوک ذخیره شد. سرویس را ری‌استارت کنید:\n`sudo systemctl restart tg_moderator`"
+MSG_WEBHOOK_INVALID_URL = "آدرس URL نامعتبر است. باید با https:// شروع شود."
 MSG_GROUP_AUTHORIZED = "✅ گروه `{chat_id}` مجاز شد."
 MSG_GROUP_BANNED = "🚫 گروه `{chat_id}` مسدود شد."
 MSG_USER_BANNED = "🔨 کاربر `{user_id}` به‌صورت سراسری بن شد."
 MSG_INVALID_CHAT_ID = "شناسه گروه نامعتبر است."
 MSG_INVALID_USER_ID = "شناسه کاربر نامعتبر است."
+
+
+def provider_label(provider: str) -> str:
+    labels = {
+        "openai": PROVIDER_OPENAI,
+        "gemini": PROVIDER_GEMINI,
+        "openai_compat": PROVIDER_COMPAT,
+    }
+    return labels.get(provider, provider)
+
+
+def format_ai_settings(settings: dict, configured: bool) -> str:
+    provider = provider_label(settings.get("provider", "openai"))
+    model = settings.get("model") or "—"
+    base_url = settings.get("base_url") or AIClassifier.get_default_base_url(settings.get("provider", "openai"))
+    api_status = "✅ تنظیم شده" if settings.get("api_key") else "❌ تنظیم نشده"
+    status = "✅ آماده" if configured else "⚠️ ناقص"
+    return (
+        f"🤖 **تنظیمات AI**\n\n"
+        f"وضعیت: {status}\n"
+        f"پرووایدر: **{provider}**\n"
+        f"Base URL: `{base_url}`\n"
+        f"مدل: `{model}`\n"
+        f"کلید API: {api_status}"
+    )
+
+
+def format_webhook_settings(settings: dict) -> str:
+    use_webhook = settings.get("use_webhook") == "true"
+    mode = "Webhook" if use_webhook else "Polling"
+    url = settings.get("webhook_url") or "—"
+    return (
+        f"🌐 **تنظیمات Webhook**\n\n"
+        f"حالت: **{mode}**\n"
+        f"URL: `{url}`\n\n"
+        f"SSL و nginx در زمان نصب (با انتخاب دامنه) پیکربندی می‌شود."
+    )
 
 # --- Moderation alerts ---
 

@@ -20,7 +20,15 @@ class BotContext:
     ai: AIClassifier
     notify_queue: NotificationQueue
     pending_inputs: dict[int, dict] = field(default_factory=dict)
+    model_cache: dict[int, list[str]] = field(default_factory=dict)
+
+    async def refresh_ai_config(self) -> None:
+        settings = await self.db.get_ai_settings()
+        self.ai.api_key = settings["api_key"]
+        self.ai.provider = settings["provider"]
+        self.ai.model = settings["model"]
+        base_url = settings["base_url"] or AIClassifier.get_default_base_url(settings["provider"])
+        self.ai.base_url = base_url.rstrip("/")
 
     async def refresh_ai_key(self) -> None:
-        api_key = await self.db.get_ai_api_key()
-        self.ai.api_key = api_key
+        await self.refresh_ai_config()

@@ -22,6 +22,9 @@ class Config:
     AI_API_KEY: str = os.getenv("AI_API_KEY", "")
     AI_PROVIDER: str = os.getenv("AI_PROVIDER", "openai").lower()
     AI_MODEL: str = os.getenv("AI_MODEL", "gpt-4o-mini")
+    AI_BASE_URL: str = os.getenv("AI_BASE_URL", "")
+
+    ENV_FILE: str = os.getenv("ENV_FILE", str(BASE_DIR / ".env"))
 
     DB_BACKEND: str = os.getenv("DB_BACKEND", "sqlite").lower()
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'gdoc.db'}")
@@ -61,7 +64,5 @@ class Config:
             missing.append("BOT_TOKEN")
         if not cls.SUPER_ADMIN_ID:
             missing.append("SUPER_ADMIN_ID")
-        if not cls.AI_API_KEY:
-            missing.append("AI_API_KEY")
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")

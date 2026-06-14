@@ -72,36 +72,69 @@ prompt_value() {
     printf -v "${var_name}" '%s' "${input}"
 }
 
+validate_super_admin_id() {
+    local id="$1"
+    if [[ ! "${id}" =~ ^[0-9]+$ ]]; then
+        log_error "شناسه سوپرادمین باید عددی باشد (از @userinfobot بگیرید)."
+        return 1
+    fi
+    return 0
+}
+
 collect_config() {
-    if [[ -n "${BOT_TOKEN:-}" && -n "${SUPER_ADMIN_ID:-}" && -n "${AI_API_KEY:-}" ]]; then
-        log_info "Using configuration from environment variables."
-        AI_PROVIDER="${AI_PROVIDER:-openai}"
-        USE_WEBHOOK="${USE_WEBHOOK:-false}"
-        WEBHOOK_URL="${WEBHOOK_URL:-}"
-        if [[ "${AI_PROVIDER}" == "gemini" ]]; then
-            AI_MODEL="${AI_MODEL:-gemini-1.5-flash}"
+    USE_WEBHOOK="${USE_WEBHOOK:-false}"
+    WEBHOOK_DOMAIN="${WEBHOOK_DOMAIN:-}"
+    SSL_EMAIL="${SSL_EMAIL:-}"
+    CF_API_TOKEN="${CF_API_TOKEN:-}"
+
+    if [[ -n "${BOT_TOKEN:-}" && -n "${SUPER_ADMIN_ID:-}" ]]; then
+        log_info "تنظیمات از متغیرهای محیطی خوانده شد."
+        if ! validate_super_admin_id "${SUPER_ADMIN_ID}"; then
+            exit 1
+        fi
+        if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" ]]; then
+            WEBHOOK_URL="https://${WEBHOOK_DOMAIN}"
         else
-            AI_MODEL="${AI_MODEL:-gpt-4o-mini}"
+            WEBHOOK_URL=""
+            USE_WEBHOOK="false"
         fi
         return 0
     fi
 
-    prompt_value BOT_TOKEN "Enter Telegram Bot Token (from @BotFather)"
-    prompt_value SUPER_ADMIN_ID "Enter Super Admin Telegram Numeric ID"
-    prompt_value AI_PROVIDER "AI Provider (openai/gemini)" "openai"
-    prompt_value AI_API_KEY "Enter OpenAI/Gemini API Key"
+    echo
+    log_info "--- تنظیمات ربات ---"
+    prompt_value BOT_TOKEN "توکن ربات تلگرام (از @BotFather)"
+    while true; do
+        prompt_value SUPER_ADMIN_ID "شناسه عددی سوپرادمین (از @userinfobot)"
+        if validate_super_admin_id "${SUPER_ADMIN_ID}"; then
+            break
+        fi
+    done
 
-    if [[ "${AI_PROVIDER}" == "gemini" ]]; then
-        prompt_value AI_MODEL "Gemini model name" "gemini-1.5-flash"
-    else
-        prompt_value AI_MODEL "OpenAI model name" "gpt-4o-mini"
-    fi
+    echo
+    log_info "--- دامنه و SSL (Webhook) ---"
+    log_info "تنظیمات AI (Base URL و کلید API) بعداً از پنل /superadmin در تلگرام انجام می‌شود."
+    prompt_value USE_WEBHOOK "از دامنه با SSL استفاده شود؟ (true/false)" "true"
 
-    prompt_value USE_WEBHOOK "Use webhook mode? (true/false)" "false"
     if [[ "${USE_WEBHOOK}" == "true" ]]; then
-        prompt_value WEBHOOK_URL "Public webhook URL (https://your-domain.com)"
+        prompt_value WEBHOOK_DOMAIN "دامنه وب‌هوک (مثال: bot.example.com)"
+        prompt_value SSL_EMAIL "ایمیل برای گواهی SSL (Let's Encrypt)"
+        prompt_value USE_CLOUDFLARE "دامنه روی Cloudflare است؟ (true/false)" "true"
+        if [[ "${USE_CLOUDFLARE}" == "true" ]]; then
+            prompt_value CF_API_TOKEN "توکن API کلادفلر (دسترسی Zone:DNS:Edit)"
+            log_info "SSL با DNS challenge کلادفلر برای ${WEBHOOK_DOMAIN} صادر می‌شود."
+        else
+            CF_API_TOKEN=""
+            log_info "SSL با HTTP challenge برای ${WEBHOOK_DOMAIN} صادر می‌شود."
+            log_warn "رکورد A دامنه باید به IP همین سرور اشاره کند."
+        fi
+        WEBHOOK_URL="https://${WEBHOOK_DOMAIN}"
     else
+        WEBHOOK_DOMAIN=""
         WEBHOOK_URL=""
+        SSL_EMAIL=""
+        CF_API_TOKEN=""
+        log_warn "حالت Polling — برای production توصیه می‌شود دامنه فعال باشد."
     fi
 }
 
@@ -197,20 +230,15 @@ setup_venv() {
 write_env_file() {
     local bot_token="$1"
     local super_admin_id="$2"
-    local ai_provider="$3"
-    local ai_api_key="$4"
-    local ai_model="$5"
-    local use_webhook="$6"
-    local webhook_url="$7"
+    local use_webhook="$3"
+    local webhook_url="$4"
 
     mkdir -p "${DATA_DIR}"
 
     cat > "${ENV_FILE}" <<EOF
 BOT_TOKEN=${bot_token}
 SUPER_ADMIN_ID=${super_admin_id}
-AI_PROVIDER=${ai_provider}
-AI_API_KEY=${ai_api_key}
-AI_MODEL=${ai_model}
+# AI settings: configure via /superadmin panel in Telegram (super admin only)
 DB_BACKEND=sqlite
 DATABASE_URL=sqlite:///${DATA_DIR}/gdoc.db
 REDIS_URL=redis://localhost:6379/0
@@ -261,6 +289,22 @@ EOF
     systemctl restart "${SERVICE_NAME}.service"
 }
 
+setup_webhook_ssl() {
+    local domain="$1"
+    local email="$2"
+    local cf_token="${3:-}"
+    local ssl_script="${INSTALL_DIR}/scripts/setup_webhook_ssl.sh"
+
+    if [[ ! -f "${ssl_script}" ]]; then
+        log_error "SSL setup script not found: ${ssl_script}"
+        exit 1
+    fi
+
+    chmod +x "${ssl_script}"
+    log_info "Setting up nginx + SSL for ${domain}..."
+    bash "${ssl_script}" "${domain}" "${email}" "${cf_token}" 8443 /webhook
+}
+
 print_summary() {
     echo
     log_info "=========================================="
@@ -279,9 +323,14 @@ print_summary() {
     echo "  /superadmin  — Owner control panel"
     echo
     echo "Next steps:"
-    echo "  1. Add the bot to your Telegram group"
-    echo "  2. Promote the bot to administrator"
-    echo "  3. Run /panel in the group to configure moderation"
+    echo "  1. Send /superadmin to the bot in private chat"
+    echo "  2. Configure AI provider, API key, and model from the panel"
+    echo "  3. Add the bot to your Telegram group and promote to admin"
+    echo "  4. Run /panel in the group to configure moderation"
+    if [[ "${USE_WEBHOOK:-false}" == "true" && -n "${WEBHOOK_DOMAIN:-}" ]]; then
+        echo
+        echo "Webhook: https://${WEBHOOK_DOMAIN}/webhook (SSL active)"
+    fi
     echo
 }
 
@@ -290,24 +339,27 @@ main() {
     echo " gdoc — Group Doctor Moderator Bot Installer"
     echo "=========================================="
     echo
+    echo "نصب از گیت‌هاب:"
+    echo "  curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash"
+    echo
 
     require_root_for_systemd
     resolve_install_dir
     update_paths
     install_system_packages
 
-    local BOT_TOKEN="${BOT_TOKEN:-}"
-    local SUPER_ADMIN_ID="${SUPER_ADMIN_ID:-}"
-    local AI_PROVIDER="${AI_PROVIDER:-}"
-    local AI_API_KEY="${AI_API_KEY:-}"
-    local AI_MODEL="${AI_MODEL:-}"
-    local USE_WEBHOOK="${USE_WEBHOOK:-}"
-    local WEBHOOK_URL="${WEBHOOK_URL:-}"
+    BOT_TOKEN="${BOT_TOKEN:-}"
+    SUPER_ADMIN_ID="${SUPER_ADMIN_ID:-}"
 
     collect_config
 
     setup_venv
-    write_env_file "${BOT_TOKEN}" "${SUPER_ADMIN_ID}" "${AI_PROVIDER}" "${AI_API_KEY}" "${AI_MODEL}" "${USE_WEBHOOK}" "${WEBHOOK_URL}"
+    write_env_file "${BOT_TOKEN}" "${SUPER_ADMIN_ID}" "${USE_WEBHOOK}" "${WEBHOOK_URL}"
+
+    if [[ "${USE_WEBHOOK}" == "true" && -n "${WEBHOOK_DOMAIN}" && -n "${SSL_EMAIL}" ]]; then
+        setup_webhook_ssl "${WEBHOOK_DOMAIN}" "${SSL_EMAIL}" "${CF_API_TOKEN:-}"
+    fi
+
     create_systemd_service
     print_summary
 }

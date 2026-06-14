@@ -14,6 +14,11 @@ from telegram.ext import ContextTypes
 from config import Config
 from context import BotContext
 import i18n
+from webhook_manager import (
+    normalize_webhook_url,
+    update_env_file,
+    validate_webhook_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +142,31 @@ async def _handle_pending_input(
         if not await ctx.db.is_super_admin(user_id):
             return
         await ctx.db.set_ai_api_key(text)
-        await ctx.refresh_ai_key()
+        await ctx.refresh_ai_config()
         await update.message.reply_text(i18n.MSG_APIKEY_UPDATED)
+
+    elif input_type == "sa_baseurl":
+        if not await ctx.db.is_super_admin(user_id):
+            return
+        url = text.rstrip("/")
+        await ctx.db.set_ai_base_url(url)
+        await ctx.refresh_ai_config()
+        await update.message.reply_text(
+            i18n.MSG_BASEURL_UPDATED.format(url=url),
+            parse_mode="Markdown",
+        )
+
+    elif input_type == "sa_webhook_url":
+        if not await ctx.db.is_super_admin(user_id):
+            return
+        url = normalize_webhook_url(text)
+        if not validate_webhook_url(url):
+            await update.message.reply_text(i18n.MSG_WEBHOOK_INVALID_URL)
+            return
+        await ctx.db.set_use_webhook(True)
+        await ctx.db.set_webhook_url(url)
+        update_env_file(Config.ENV_FILE, {"USE_WEBHOOK": "true", "WEBHOOK_URL": url})
+        await update.message.reply_text(i18n.MSG_WEBHOOK_URL_SAVED, parse_mode="Markdown")
 
     elif input_type == "sa_auth":
         if not await ctx.db.is_super_admin(user_id):

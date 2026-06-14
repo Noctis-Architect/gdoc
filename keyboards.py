@@ -112,14 +112,81 @@ def blacklist_keyboard(chat_id: int) -> InlineKeyboardMarkup:
 def super_admin_panel() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
+            [InlineKeyboardButton(i18n.BTN_SA_AI, callback_data=_cb("sa_ai"))],
+            [InlineKeyboardButton(i18n.BTN_SA_WEBHOOK, callback_data=_cb("sa_webhook"))],
             [InlineKeyboardButton(i18n.BTN_SA_STATS, callback_data=_cb("sa_stats"))],
             [InlineKeyboardButton(i18n.BTN_SA_GROUPS, callback_data=_cb("sa_groups"))],
-            [InlineKeyboardButton(i18n.BTN_SA_APIKEY, callback_data=_cb("sa_apikey"))],
             [InlineKeyboardButton(i18n.BTN_SA_AUTH, callback_data=_cb("sa_auth"))],
             [InlineKeyboardButton(i18n.BTN_SA_BAN_GROUP, callback_data=_cb("sa_ban_group"))],
             [InlineKeyboardButton(i18n.BTN_SA_BAN_USER, callback_data=_cb("sa_ban_user"))],
             [InlineKeyboardButton(i18n.BTN_SA_AUDIT, callback_data=_cb("sa_audit"))],
         ],
+    )
+
+
+def ai_settings_panel() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(i18n.BTN_SA_PROVIDER, callback_data=_cb("sa_provider"))],
+            [InlineKeyboardButton(i18n.BTN_SA_BASEURL, callback_data=_cb("sa_baseurl"))],
+            [InlineKeyboardButton(i18n.BTN_SA_APIKEY, callback_data=_cb("sa_apikey"))],
+            [InlineKeyboardButton(i18n.BTN_SA_MODEL, callback_data=_cb("sa_model"))],
+            [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_panel"))],
+        ],
+    )
+
+
+def provider_keyboard(current: str) -> InlineKeyboardMarkup:
+    providers = [
+        ("openai", i18n.PROVIDER_OPENAI),
+        ("gemini", i18n.PROVIDER_GEMINI),
+        ("openai_compat", i18n.PROVIDER_COMPAT),
+    ]
+    rows = []
+    for key, label in providers:
+        mark = "✓ " if key == current else ""
+        rows.append(
+            [InlineKeyboardButton(f"{mark}{label}", callback_data=_cb("sa_set_provider", 0, key))],
+        )
+    rows.append([InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_ai"))])
+    return InlineKeyboardMarkup(rows)
+
+
+def model_keyboard(models: list[str], page: int = 0, page_size: int = 8) -> InlineKeyboardMarkup:
+    start = page * page_size
+    end = start + page_size
+    page_models = models[start:end]
+    rows = []
+    for idx, model in enumerate(page_models):
+        global_idx = start + idx
+        label = model if len(model) <= 40 else model[:37] + "…"
+        rows.append(
+            [InlineKeyboardButton(label, callback_data=_cb("sa_set_model", 0, str(global_idx)))],
+        )
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=_cb("sa_model_page", 0, str(page - 1))))
+    if end < len(models):
+        nav.append(InlineKeyboardButton("▶️", callback_data=_cb("sa_model_page", 0, str(page + 1))))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_ai"))])
+    return InlineKeyboardMarkup(rows)
+
+
+def webhook_panel() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(i18n.BTN_WH_POLLING, callback_data=_cb("sa_wh_polling"))],
+            [InlineKeyboardButton(i18n.BTN_WH_MANUAL, callback_data=_cb("sa_wh_manual"))],
+            [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_panel"))],
+        ],
+    )
+
+
+def back_to_ai_settings() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("sa_ai"))]],
     )
 
 

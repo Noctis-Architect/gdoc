@@ -1,4 +1,4 @@
-"""AI classification layer using OpenAI or Google Gemini."""
+"""AI classification layer using OpenAI-compatible or Gemini APIs."""
 
 from __future__ import annotations
 
@@ -14,6 +14,12 @@ import httpx
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_BASE_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
+    "openai_compat": "",
+}
 
 GLOBAL_SYSTEM_RULES = """
 You are a Telegram group moderation classifier for the gdoc (Group Doctor) bot.
@@ -59,12 +65,23 @@ class ClassificationResult:
 class AIClassifier:
     """Async AI moderation classifier with rate limiting."""
 
-    def __init__(self, api_key: str, provider: Optional[str] = None, model: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: str = "",
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
         self.api_key = api_key
         self.provider = (provider or Config.AI_PROVIDER).lower()
         self.model = model or Config.AI_MODEL
+        self.base_url = (base_url or Config.AI_BASE_URL or self.get_default_base_url(self.provider)).rstrip("/")
         self._semaphore = asyncio.Semaphore(Config.AI_CONCURRENCY)
         self._client: Optional[httpx.AsyncClient] = None
+
+    @staticmethod
+    def get_default_base_url(provider: str) -> str:
+        return DEFAULT_BASE_URLS.get(provider, DEFAULT_BASE_URLS["openai"])
 
     async def start(self) -> None:
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
@@ -72,6 +89,65 @@ class AIClassifier:
     async def close(self) -> None:
         if self._client:
             await self._client.aclose()
+
+    async def list_models(self) -> tuple[list[str], str]:
+        """Fetch available models from the configured provider. Returns (models, error)."""
+        if not self.api_key:
+            return [], "API key not configured"
+        if not self._client:
+            await self.start()
+
+        try:
+            if self.provider == "gemini":
+                return await self._list_gemini_models()
+            return await self._list_openai_models()
+        except httpx.HTTPStatusError as exc:
+            return [], f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"
+        except Exception as exc:
+            logger.exception("Failed to list models: %s", exc)
+            return [], str(exc)
+
+    async def _list_openai_models(self) -> tuple[list[str], str]:
+        assert self._client is not None
+        url = f"{self.base_url}/models"
+        response = await self._client.get(
+            url,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        response.raise_for_status()
+        data = response.json()
+        models = []
+        for item in data.get("data", []):
+            model_id = item.get("id", "")
+            if model_id and self._is_chat_model(model_id):
+                models.append(model_id)
+        models.sort()
+        return models or [self.model], ""
+
+    async def _list_gemini_models(self) -> tuple[list[str], str]:
+        assert self._client is not None
+        url = f"{self.base_url}/models?key={self.api_key}"
+        response = await self._client.get(url)
+        response.raise_for_status()
+        data = response.json()
+        models = []
+        for item in data.get("models", []):
+            name = item.get("name", "")
+            if name.startswith("models/"):
+                name = name[7:]
+            methods = item.get("supportedGenerationMethods", [])
+            if name and ("generateContent" in methods or not methods):
+                models.append(name)
+        models.sort()
+        return models or [self.model], ""
+
+    @staticmethod
+    def _is_chat_model(model_id: str) -> bool:
+        skip_prefixes = ("text-embedding", "tts-", "whisper", "dall-e", "davinci", "babbage")
+        if any(model_id.startswith(p) for p in skip_prefixes):
+            return False
+        chat_hints = ("gpt", "o1", "o3", "o4", "claude", "llama", "mistral", "gemini", "chat")
+        return any(h in model_id.lower() for h in chat_hints)
 
     async def classify(
         self,
@@ -81,6 +157,9 @@ class AIClassifier:
     ) -> ClassificationResult:
         if not message_text.strip():
             return ClassificationResult("SAFE", "Empty message")
+
+        if not self.api_key:
+            return ClassificationResult("SAFE", "AI not configured")
 
         strictness = strictness if strictness in STRICTNESS_INSTRUCTIONS else "medium"
         user_prompt = self._build_user_prompt(message_text, custom_rules, strictness)
@@ -125,7 +204,7 @@ class AIClassifier:
     async def _call_openai(self, user_prompt: str) -> ClassificationResult:
         assert self._client is not None
         response = await self._client.post(
-            "https://api.openai.com/v1/chat/completions",
+            f"{self.base_url}/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -148,10 +227,7 @@ class AIClassifier:
     async def _call_gemini(self, user_prompt: str) -> ClassificationResult:
         assert self._client is not None
         model = self.model if self.model.startswith("gemini") else "gemini-1.5-flash"
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{model}:generateContent?key={self.api_key}"
-        )
+        url = f"{self.base_url}/models/{model}:generateContent?key={self.api_key}"
         response = await self._client.post(
             url,
             json={

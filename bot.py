@@ -54,7 +54,13 @@ async def post_init(application: Application) -> None:
     await db.ensure_super_admin(Config.SUPER_ADMIN_ID)
 
     api_key = await db.get_ai_api_key()
-    ai = AIClassifier(api_key=api_key)
+    ai_settings = await db.get_ai_settings()
+    ai = AIClassifier(
+        api_key=ai_settings["api_key"],
+        provider=ai_settings["provider"],
+        model=ai_settings["model"],
+        base_url=ai_settings["base_url"] or None,
+    )
     await ai.start()
 
     moderation = ModerationEngine(db, cache, ai)
@@ -68,7 +74,12 @@ async def post_init(application: Application) -> None:
         ai=ai,
         notify_queue=notify_queue,
     )
-    logger.info("gdoc bot initialized (provider=%s, model=%s)", Config.AI_PROVIDER, Config.AI_MODEL)
+    logger.info(
+        "gdoc bot initialized (provider=%s, model=%s, ai_configured=%s)",
+        ai.provider,
+        ai.model,
+        bool(ai.api_key),
+    )
 
 
 async def post_shutdown(application: Application) -> None:

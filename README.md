@@ -35,7 +35,13 @@ The installer clones the repository (if needed), installs system dependencies, c
 
 ### Option A — One command (recommended)
 
-Download the installer, then run it. This keeps your terminal available for the setup prompts:
+Install directly from GitHub with curl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
+```
+
+Alternative (saves script first, then runs — same prompts):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
@@ -49,19 +55,17 @@ curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.
 sudo INSTALL_DIR=/home/gdoc/gdoc bash /tmp/gdoc-install.sh
 ```
 
-Pipe one-liner (also supported — prompts read from `/dev/tty`):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
-```
-
 Non-interactive install via environment variables:
 
 ```bash
-sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" AI_API_KEY="..." bash /tmp/gdoc-install.sh
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
+sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" \
+  USE_WEBHOOK="true" WEBHOOK_DOMAIN="bot.example.com" SSL_EMAIL="you@example.com" \
+  CF_API_TOKEN="..." bash /tmp/gdoc-install.sh
 ```
 
-> **Note:** Use `sudo bash`, not `sudo curl`. Only the installer needs root.
+> **Note:** Use `sudo bash`, not `sudo curl`. Only the installer needs root.  
+> **AI settings** (API key, base URL, model) are configured later via `/superadmin` in Telegram — not during install.
 
 ### Option B — Clone, then install
 
@@ -75,10 +79,10 @@ The interactive installer will ask for:
 
 1. **Telegram Bot Token** — from [@BotFather](https://t.me/BotFather)
 2. **Super Admin ID** — your numeric Telegram user ID (use [@userinfobot](https://t.me/userinfobot))
-3. **AI Provider** — `openai` or `gemini`
-4. **AI API Key** — OpenAI or Gemini key
-5. **Model name** — e.g. `gpt-4o-mini` or `gemini-1.5-flash`
-6. **Webhook mode** — `false` for polling (default), `true` if you have a public HTTPS URL
+3. **Domain & SSL** — webhook domain, Let's Encrypt email, and optional Cloudflare API token for automatic SSL
+4. **Polling fallback** — set webhook to `false` if you have no public domain
+
+**Not asked during install:** AI provider, API key, base URL, or model — configure these from `/superadmin` in Telegram (super admin only).
 
 When finished, the bot runs as a systemd service.
 
@@ -142,9 +146,10 @@ sudo systemctl restart tg_moderator
 |----------|---------|-------------|
 | `BOT_TOKEN` | — | Telegram bot token (required) |
 | `SUPER_ADMIN_ID` | — | Owner Telegram numeric ID (required) |
-| `AI_PROVIDER` | `openai` | `openai` or `gemini` |
-| `AI_API_KEY` | — | API key for the chosen provider (required) |
-| `AI_MODEL` | `gpt-4o-mini` | Model name |
+| `AI_PROVIDER` | `openai` | `openai` or `gemini` — set via `/superadmin` panel |
+| `AI_API_KEY` | — | API key — set via `/superadmin` panel (optional env fallback) |
+| `AI_BASE_URL` | — | Custom API base URL — set via `/superadmin` panel |
+| `AI_MODEL` | `gpt-4o-mini` | Model name — set via `/superadmin` panel |
 | `DB_BACKEND` | `sqlite` | `sqlite` or `postgres` |
 | `DATABASE_URL` | `sqlite:///./data/gdoc.db` | SQLite path |
 | `POSTGRES_DSN` | — | PostgreSQL connection string (if using postgres) |
@@ -204,7 +209,7 @@ ModerationEngine
 sudo journalctl -u tg_moderator -n 50 --no-pager
 ```
 
-Check that `BOT_TOKEN`, `SUPER_ADMIN_ID`, and `AI_API_KEY` are set in `.env`.
+Check that `BOT_TOKEN` and `SUPER_ADMIN_ID` are set in `.env`. Configure AI via `/superadmin` if moderation is not working.
 
 **Bot cannot delete messages**
 
@@ -295,7 +300,13 @@ See repository for license details.
 
 ### روش ۱ — یک دستور (پیشنهادی)
 
-فایل نصب را دانلود کنید و اجرا کنید تا promptها در ترمینال نمایش داده شوند:
+نصب مستقیم از گیت‌هاب با curl:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
+```
+
+روش جایگزین (ذخیره اسکریپت و اجرا):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
@@ -309,19 +320,17 @@ curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.
 sudo INSTALL_DIR=/home/gdoc/gdoc bash /tmp/gdoc-install.sh
 ```
 
-یک خطی با pipe (پشتیبانی می‌شود — promptها از `/dev/tty` خوانده می‌شوند):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
-```
-
 نصب بدون تعامل با متغیر محیطی:
 
 ```bash
-sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" AI_API_KEY="..." bash /tmp/gdoc-install.sh
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
+sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" \
+  USE_WEBHOOK="true" WEBHOOK_DOMAIN="bot.example.com" SSL_EMAIL="you@example.com" \
+  CF_API_TOKEN="..." bash /tmp/gdoc-install.sh
 ```
 
-> **نکته:** فقط `bash` را با sudo اجرا کنید، نه `curl` را.
+> **نکته:** فقط `bash` را با sudo اجرا کنید، نه `curl` را.  
+> **تنظیمات AI** (کلید API، Base URL، مدل) بعداً از `/superadmin` در تلگرام انجام می‌شود — نه در زمان نصب.
 
 ### روش ۲ — Clone و سپس نصب
 
@@ -335,10 +344,10 @@ sudo bash install.sh
 
 1. **توکن ربات تلگرام** — از [@BotFather](https://t.me/BotFather)
 2. **شناسه عددی سوپرادمین** — ID عددی تلگرام شما (از [@userinfobot](https://t.me/userinfobot))
-3. **ارائه‌دهنده AI** — `openai` یا `gemini`
-4. **کلید API** — کلید OpenAI یا Gemini
-5. **نام مدل** — مثلاً `gpt-4o-mini` یا `gemini-1.5-flash`
-6. **حالت webhook** — `false` برای polling (پیش‌فرض)، `true` اگر URL عمومی HTTPS دارید
+3. **دامنه و SSL** — دامنه وب‌هوک، ایمیل Let's Encrypt، و در صورت نیاز توکن API کلادفلر برای SSL خودکار
+4. **Polling** — اگر دامنه عمومی ندارید، webhook را `false` بگذارید
+
+**در زمان نصب پرسیده نمی‌شود:** پرووایدر AI، کلید API، Base URL، مدل — فقط از `/superadmin` در تلگرام (فقط سوپرادمین).
 
 پس از اتمام، ربات به‌صورت سرویس systemd اجرا می‌شود.
 
@@ -402,9 +411,10 @@ sudo systemctl restart tg_moderator
 |-------|---------|-------|
 | `BOT_TOKEN` | — | توکن ربات (الزامی) |
 | `SUPER_ADMIN_ID` | — | ID عددی مالک (الزامی) |
-| `AI_PROVIDER` | `openai` | `openai` یا `gemini` |
-| `AI_API_KEY` | — | کلید API (الزامی) |
-| `AI_MODEL` | `gpt-4o-mini` | نام مدل |
+| `AI_PROVIDER` | `openai` | `openai` یا `gemini` — از پنل `/superadmin` |
+| `AI_API_KEY` | — | کلید API — از پنل `/superadmin` (اختیاری در env) |
+| `AI_BASE_URL` | — | آدرس پایه API — از پنل `/superadmin` |
+| `AI_MODEL` | `gpt-4o-mini` | نام مدل — از پنل `/superadmin` |
 | `DB_BACKEND` | `sqlite` | `sqlite` یا `postgres` |
 | `REDIS_URL` | `redis://localhost:6379/0` | اتصال Redis |
 | `USE_WEBHOOK` | `false` | `true` برای webhook |
@@ -439,7 +449,7 @@ python bot.py
 sudo journalctl -u tg_moderator -n 50 --no-pager
 ```
 
-مطمئن شوید `BOT_TOKEN`، `SUPER_ADMIN_ID` و `AI_API_KEY` در `.env` تنظیم شده‌اند.
+مطمئن شوید `BOT_TOKEN` و `SUPER_ADMIN_ID` در `.env` تنظیم شده‌اند. AI را از `/superadmin` پیکربندی کنید.
 
 **ربات پیام حذف نمی‌کند**
 

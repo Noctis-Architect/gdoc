@@ -695,6 +695,65 @@ class Database:
     async def set_ai_api_key(self, api_key: str) -> None:
         await self.set_global_setting("ai_api_key", api_key)
 
+    async def get_ai_provider(self) -> str:
+        return await self.get_global_setting("ai_provider", Config.AI_PROVIDER)
+
+    async def set_ai_provider(self, provider: str) -> None:
+        await self.set_global_setting("ai_provider", provider.lower())
+
+    async def get_ai_model(self) -> str:
+        return await self.get_global_setting("ai_model", Config.AI_MODEL)
+
+    async def set_ai_model(self, model: str) -> None:
+        await self.set_global_setting("ai_model", model)
+
+    async def get_ai_base_url(self) -> str:
+        return await self.get_global_setting("ai_base_url", Config.AI_BASE_URL)
+
+    async def set_ai_base_url(self, base_url: str) -> None:
+        await self.set_global_setting("ai_base_url", base_url.rstrip("/"))
+
+    async def get_ai_settings(self) -> dict[str, str]:
+        return {
+            "api_key": await self.get_ai_api_key(),
+            "provider": await self.get_ai_provider(),
+            "model": await self.get_ai_model(),
+            "base_url": await self.get_ai_base_url(),
+        }
+
+    async def is_ai_configured(self) -> bool:
+        settings = await self.get_ai_settings()
+        return bool(settings["api_key"] and settings["model"])
+
+    async def get_use_webhook(self) -> bool:
+        stored = await self.get_global_setting("use_webhook", "")
+        if stored:
+            return stored.lower() == "true"
+        return Config.USE_WEBHOOK
+
+    async def set_use_webhook(self, enabled: bool) -> None:
+        await self.set_global_setting("use_webhook", "true" if enabled else "false")
+
+    async def get_webhook_url(self) -> str:
+        stored = await self.get_global_setting("webhook_url", "")
+        return stored or Config.WEBHOOK_URL
+
+    async def set_webhook_url(self, url: str) -> None:
+        await self.set_global_setting("webhook_url", url.rstrip("/"))
+
+    async def get_cf_tunnel_token(self) -> str:
+        return await self.get_global_setting("cf_tunnel_token", "")
+
+    async def set_cf_tunnel_token(self, token: str) -> None:
+        await self.set_global_setting("cf_tunnel_token", token)
+
+    async def get_webhook_settings(self) -> dict[str, str]:
+        return {
+            "use_webhook": "true" if await self.get_use_webhook() else "false",
+            "webhook_url": await self.get_webhook_url(),
+            "cf_tunnel_token": await self.get_cf_tunnel_token(),
+        }
+
     async def get_global_stats(self) -> dict[str, Any]:
         groups = await self._fetchall(
             "SELECT chat_id, title, messages_processed FROM groups WHERE is_authorized = 1",
