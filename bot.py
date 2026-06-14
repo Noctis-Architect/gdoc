@@ -131,6 +131,57 @@ def build_application() -> Application:
     return application
 
 
+def webhooks_supported() -> bool:
+    try:
+        from telegram.ext._updater import WEBHOOKS_AVAILABLE
+
+        return WEBHOOKS_AVAILABLE
+    except ImportError:
+        return False
+
+
+def resolve_run_mode() -> str:
+    """Pick webhook or polling; degrade gracefully when webhook is misconfigured."""
+    if not Config.USE_WEBHOOK:
+        return "polling"
+
+    if not Config.WEBHOOK_URL:
+        logger.error("USE_WEBHOOK=true but WEBHOOK_URL is empty — falling back to polling")
+        return "polling"
+
+    if not webhooks_supported():
+        logger.error(
+            'Webhook mode enabled but "python-telegram-bot[webhooks]" is not installed. '
+            'Run: pip install "python-telegram-bot[webhooks]". Falling back to polling.'
+        )
+        return "polling"
+
+    return "webhook"
+
+
+def start_webhook(application: Application) -> None:
+    webhook_url = Config.WEBHOOK_URL.rstrip("/") + Config.WEBHOOK_PATH
+    logger.info(
+        "Starting webhook mode on %s:%s%s",
+        Config.WEBHOOK_HOST,
+        Config.WEBHOOK_PORT,
+        Config.WEBHOOK_PATH,
+    )
+    application.run_webhook(
+        listen=Config.WEBHOOK_HOST,
+        port=Config.WEBHOOK_PORT,
+        url_path=Config.WEBHOOK_PATH.lstrip("/"),
+        webhook_url=webhook_url,
+        secret_token=Config.WEBHOOK_SECRET or None,
+        drop_pending_updates=True,
+    )
+
+
+def start_polling(application: Application) -> None:
+    logger.info("Starting polling mode")
+    application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+
+
 def main() -> None:
     try:
         application = build_application()
@@ -141,33 +192,22 @@ def main() -> None:
         logger.exception("Failed to build application")
         sys.exit(1)
 
+    mode = resolve_run_mode()
+
     try:
-        if Config.USE_WEBHOOK:
-            if not Config.WEBHOOK_URL:
-                logger.error("USE_WEBHOOK=true but WEBHOOK_URL is empty")
-                sys.exit(1)
+        if mode == "webhook":
+            try:
+                start_webhook(application)
+                return
+            except Exception:
+                logger.exception("Webhook startup failed — falling back to polling")
+                application = build_application()
 
-            webhook_url = Config.WEBHOOK_URL.rstrip("/") + Config.WEBHOOK_PATH
-            logger.info(
-                "Starting webhook mode on %s:%s%s",
-                Config.WEBHOOK_HOST,
-                Config.WEBHOOK_PORT,
-                Config.WEBHOOK_PATH,
-            )
-
-            application.run_webhook(
-                listen=Config.WEBHOOK_HOST,
-                port=Config.WEBHOOK_PORT,
-                url_path=Config.WEBHOOK_PATH.lstrip("/"),
-                webhook_url=webhook_url,
-                secret_token=Config.WEBHOOK_SECRET or None,
-                drop_pending_updates=True,
-            )
-        else:
-            logger.info("Starting polling mode")
-            application.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        start_polling(application)
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested")
     except Exception:
-        logger.exception("Failed to start gdoc bot")
+        logger.exception("Bot stopped with an error")
         sys.exit(1)
 
 
