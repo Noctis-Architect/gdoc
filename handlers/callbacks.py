@@ -154,6 +154,9 @@ async def _handle_mod_action(
         return
 
     if action == "mod_forgive":
+        # Forgiving must also lift any active Telegram ban so the user can rejoin,
+        # not only clear the warning/ban flags in the database.
+        await unban_user_in_chat(context, chat_id, target_user_id, ctx=ctx)
         await reset_warnings_cached(ctx, chat_id, target_user_id)
         result = i18n.MSG_MOD_FORGIVEN.format(user=f"کاربر {target_user_id}")
     elif action == "mod_ban":

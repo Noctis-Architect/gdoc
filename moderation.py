@@ -166,9 +166,13 @@ class ModerationEngine:
 
         delete_on_violation = group.action_mode == "delete_flag"
         if result.classification == "VIOLATION":
+            # AI-detected violations go through the warning system instead of an
+            # instant ban. The user is only banned once warnings reach the group's
+            # threshold (handled in the message handler). Explicit configured
+            # direct-ban rules still ban immediately via check_ban_rules.
             should_delete = delete_on_violation
-            should_warn = False
-            should_ban = True
+            should_warn = True
+            should_ban = False
         else:
             should_delete = delete_on_violation and group.strictness == "high"
             should_warn = group.strictness in ("medium", "high")

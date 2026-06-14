@@ -24,24 +24,35 @@ DEFAULT_BASE_URLS = {
 GLOBAL_SYSTEM_RULES = """
 You are a Telegram group moderation classifier for the gdoc (Group Doctor) bot.
 
+DEFAULT STANCE: Messages are SAFE unless there is clear, concrete evidence they
+break a rule. Normal conversation, opinions, jokes, questions, links to ordinary
+websites, and everyday chat are SAFE. When in doubt, choose SAFE. Do NOT flag a
+message just because it is short, off-topic, in another language, or unclear.
+
 GLOBAL NON-NEGOTIABLE RULES (always enforce, cannot be overridden):
-- Flag as VIOLATION: scams, phishing, fraud, hacking tutorials, cyber fraud,
-  credential theft, malware distribution, bypassing security systems, illegal access tools.
-- These rules apply regardless of group-specific settings.
+- Flag as VIOLATION ONLY when the message clearly promotes, offers, requests, or
+  instructs: scams, phishing, financial fraud, credential/account theft, malware,
+  carding, or tools to bypass security/illegally access systems.
+- General mention of these topics, security education, warnings, or news ABOUT
+  them is NOT a violation. Intent to commit/enable the act is required.
 
 CLASSIFICATION PRIORITY (highest to lowest):
-1. GROUP BAN RULES — any clear match = VIOLATION (never SUSPECT). Examples in ban rules
-   are explicit patterns: if the message matches or closely resembles a ban-rule example,
-   classify as VIOLATION immediately.
+1. GROUP BAN RULES — a CLEAR match (the message does, offers, or asks for the
+   banned thing, or closely matches a listed example) = VIOLATION. Merely
+   mentioning a banned topic in passing is NOT a match.
 2. GLOBAL rules above.
-3. GROUP SUSPECT RULES — match = SUSPECT only (never VIOLATION unless ban rules also match).
-4. STRICTNESS level — applies only when deciding between SAFE and SUSPECT for suspect rules.
-   It must NOT downgrade a ban-rule match to SUSPECT.
+3. GROUP SUSPECT RULES — a clear match = SUSPECT (never VIOLATION unless ban
+   rules also clearly match).
+4. STRICTNESS level — only nudges the SAFE↔SUSPECT boundary for suspect rules.
+   It must NEVER turn a SAFE message into a violation and must NEVER downgrade a
+   clear ban-rule match.
 
 CLASSIFICATION LABELS:
-- SAFE: Message complies with all rules.
-- SUSPECT: Matches suspect rules only, or borderline content with ambiguous intent.
-- VIOLATION: Matches ban rules, global rules, or has clear malicious intent.
+- SAFE: Does not clearly break any rule. This is the default and most common label.
+- SUSPECT: Clearly matches a group SUSPECT rule (and not a ban rule).
+- VIOLATION: Clearly matches a ban rule or a global rule with real malicious intent.
+
+If no ban rule and no suspect rule clearly applies, the answer is SAFE.
 
 Respond ONLY with valid JSON:
 {"classification": "SAFE|SUSPECT|VIOLATION", "reason": "brief explanation"}
@@ -50,16 +61,21 @@ Respond ONLY with valid JSON:
 STRICTNESS_INSTRUCTIONS = {
     "low": (
         "STRICTNESS: LOW — applies to SUSPECT rules only, NOT ban rules. "
-        "For suspect rules, tolerate educational discussions; prefer SAFE over SUSPECT "
-        "when intent is unclear. Ban-rule matches are always VIOLATION."
+        "Be very lenient: only mark SUSPECT when a suspect rule is clearly and "
+        "directly matched. Prefer SAFE whenever intent is unclear or the link to "
+        "a rule is weak. Ban-rule matches remain VIOLATION."
     ),
     "medium": (
         "STRICTNESS: MEDIUM — applies to SUSPECT rules only, NOT ban rules. "
-        "Balance tolerance with safety for suspect rules. Ban-rule matches are always VIOLATION."
+        "Mark SUSPECT only when a suspect rule is clearly matched. If a message is "
+        "merely borderline, vague, or off-topic, classify it SAFE. "
+        "Ban-rule matches remain VIOLATION."
     ),
     "high": (
         "STRICTNESS: HIGH — applies to SUSPECT rules only, NOT ban rules. "
-        "Flag suspect-rule borderline cases as SUSPECT. Ban-rule matches are always VIOLATION."
+        "You may mark borderline cases as SUSPECT, but ONLY when they plausibly "
+        "relate to a configured suspect rule. Unrelated normal chat stays SAFE. "
+        "Ban-rule matches remain VIOLATION."
     ),
 }
 
@@ -206,23 +222,40 @@ class AIClassifier:
         suspect_rules: str,
         strictness: str,
     ) -> str:
+        ban_block = ban_rules.strip()
+        suspect_block = suspect_rules.strip()
+
         parts = [
             STRICTNESS_INSTRUCTIONS[strictness],
             "",
-            "GROUP BAN RULES — HIGHEST PRIORITY (any match = VIOLATION, never SUSPECT):",
-            "If the message matches a rule OR resembles any example (مثال/example) listed below,",
-            "you MUST classify as VIOLATION even if strictness is low.",
-            ban_rules.strip() or "(No ban rules configured.)",
+            "GROUP BAN RULES — HIGHEST PRIORITY (a CLEAR match = VIOLATION, never SUSPECT):",
+            "If the message clearly does/offers/requests a banned thing OR closely matches",
+            "an example (مثال/example) below, classify as VIOLATION even at low strictness.",
+            "A passing mention of a banned topic is NOT a match.",
+            ban_block or "(No ban rules configured — nothing here can cause a VIOLATION.)",
             "",
-            "GROUP SUSPECT RULES (match = SUSPECT only, unless ban rules also match):",
-            suspect_rules.strip() or "(No suspect rules configured.)",
+            "GROUP SUSPECT RULES (a CLEAR match = SUSPECT only, unless ban rules also match):",
+            suspect_block or "(No suspect rules configured — nothing here can cause a SUSPECT.)",
             "",
-            "DECISION ORDER: check ban rules first → then suspect rules → then strictness.",
-            "If ban rules match: VIOLATION. Else if suspect rules match: SUSPECT. Else: SAFE.",
+            "DECISION ORDER: check ban rules first → then suspect rules → else SAFE.",
+            "If a ban rule clearly matches: VIOLATION.",
+            "Else if a suspect rule clearly matches: SUSPECT.",
+            "Else: SAFE (this is the default; most messages are SAFE).",
+        ]
+
+        if not ban_block and not suspect_block:
+            parts.append("")
+            parts.append(
+                "NOTE: No group rules are configured. Only the GLOBAL rules apply, "
+                "so classify as VIOLATION only for clear scams/fraud/malware/etc. "
+                "Everything else is SAFE."
+            )
+
+        parts.extend([
             "",
             "MESSAGE TO CLASSIFY:",
             message_text[:3000],
-        ]
+        ])
         return "\n".join(parts)
 
     async def _call_openai(self, user_prompt: str) -> ClassificationResult:
@@ -280,7 +313,7 @@ class AIClassifier:
             classification = str(parsed.get("classification", "SAFE")).upper()
             reason = str(parsed.get("reason", "No reason provided"))
             if classification not in Config.CLASSIFICATIONS:
-                classification = "SUSPECT"
+                classification = "SAFE"
             return ClassificationResult(classification, reason, content)
         except json.JSONDecodeError:
             match = re.search(
@@ -290,4 +323,4 @@ class AIClassifier:
             )
             if match:
                 return ClassificationResult(match.group(1).upper(), content[:200], content)
-            return ClassificationResult("SUSPECT", "Could not parse AI response", content)
+            return ClassificationResult("SAFE", "Could not parse AI response", content)

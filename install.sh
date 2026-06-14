@@ -205,6 +205,39 @@ is_gdoc_source_dir() {
     [[ -f "${dir}/bot.py" && -f "${dir}/requirements.txt" ]]
 }
 
+clear_code_caches() {
+    local dir="$1"
+    # Remove Python bytecode caches so freshly pulled source is always used.
+    # data/ (database) and .env are never touched here.
+    log_info "پاک‌سازی کش کدها (bytecode)..."
+    find "${dir}" -type d -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+    find "${dir}" -type f -name '*.pyc' -delete 2>/dev/null || true
+    find "${dir}" -type f -name '*.pyo' -delete 2>/dev/null || true
+}
+
+flush_redis_cache() {
+    # Flush only the bot's prefixed keys (group config, blacklist, warning counts).
+    # This never touches the persistent database in data/.
+    local prefix="gdoc:"
+    if [[ -f "${ENV_FILE}" ]]; then
+        local stored_prefix
+        stored_prefix="$(read_env_value REDIS_PREFIX "${ENV_FILE}")"
+        if [[ -n "${stored_prefix}" ]]; then
+            prefix="${stored_prefix}"
+        fi
+    fi
+    if ! command -v redis-cli >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! redis-cli ping >/dev/null 2>&1; then
+        return 0
+    fi
+    log_info "پاک‌سازی کش Redis (کلیدهای ${prefix}*)..."
+    # SCAN + DEL avoids blocking Redis and only removes this bot's keys.
+    redis-cli --scan --pattern "${prefix}*" 2>/dev/null \
+        | xargs -r -n 100 redis-cli DEL >/dev/null 2>&1 || true
+}
+
 sync_install_dir() {
     local dir="$1"
     if [[ ! -d "${dir}/.git" ]]; then
@@ -219,6 +252,9 @@ sync_install_dir() {
     else
         log_warn "git pull ناموفق بود؛ فایل‌های گم‌شده به‌صورت دستی دانلود می‌شوند."
     fi
+
+    clear_code_caches "${dir}"
+    flush_redis_cache
 }
 
 finalize_install_dir() {
