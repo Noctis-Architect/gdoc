@@ -13,7 +13,11 @@ VENV_DIR=""
 ENV_FILE=""
 DATA_DIR=""
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-CURRENT_USER="$(whoami)"
+if [[ -n "${SUDO_USER:-}" ]]; then
+    CURRENT_USER="${SUDO_USER}"
+else
+    CURRENT_USER="$(whoami)"
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,23 +36,73 @@ require_root_for_systemd() {
     fi
 }
 
+prompt_read() {
+    # When piped (curl | bash), stdin is the script — read prompts from the terminal.
+    local _input=""
+    if [[ -t 0 ]]; then
+        read -r "$@" _input || true
+    elif [[ -r /dev/tty ]]; then
+        read -r "$@" _input </dev/tty || true
+    else
+        log_error "No interactive terminal available."
+        log_error "Download and run instead:"
+        log_error "  curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh"
+        log_error "  sudo bash /tmp/gdoc-install.sh"
+        exit 1
+    fi
+    printf '%s' "${_input}"
+}
+
 prompt_value() {
     local var_name="$1"
     local prompt_text="$2"
     local default_value="${3:-}"
     local input=""
     if [[ -n "${default_value}" ]]; then
-        read -r -p "${prompt_text} [${default_value}]: " input
+        input="$(prompt_read -p "${prompt_text} [${default_value}]: ")"
         input="${input:-${default_value}}"
     else
         while [[ -z "${input}" ]]; do
-            read -r -p "${prompt_text}: " input
+            input="$(prompt_read -p "${prompt_text}: ")"
             if [[ -z "${input}" ]]; then
                 log_error "This value is required."
             fi
         done
     fi
     printf -v "${var_name}" '%s' "${input}"
+}
+
+collect_config() {
+    if [[ -n "${BOT_TOKEN:-}" && -n "${SUPER_ADMIN_ID:-}" && -n "${AI_API_KEY:-}" ]]; then
+        log_info "Using configuration from environment variables."
+        AI_PROVIDER="${AI_PROVIDER:-openai}"
+        USE_WEBHOOK="${USE_WEBHOOK:-false}"
+        WEBHOOK_URL="${WEBHOOK_URL:-}"
+        if [[ "${AI_PROVIDER}" == "gemini" ]]; then
+            AI_MODEL="${AI_MODEL:-gemini-1.5-flash}"
+        else
+            AI_MODEL="${AI_MODEL:-gpt-4o-mini}"
+        fi
+        return 0
+    fi
+
+    prompt_value BOT_TOKEN "Enter Telegram Bot Token (from @BotFather)"
+    prompt_value SUPER_ADMIN_ID "Enter Super Admin Telegram Numeric ID"
+    prompt_value AI_PROVIDER "AI Provider (openai/gemini)" "openai"
+    prompt_value AI_API_KEY "Enter OpenAI/Gemini API Key"
+
+    if [[ "${AI_PROVIDER}" == "gemini" ]]; then
+        prompt_value AI_MODEL "Gemini model name" "gemini-1.5-flash"
+    else
+        prompt_value AI_MODEL "OpenAI model name" "gpt-4o-mini"
+    fi
+
+    prompt_value USE_WEBHOOK "Use webhook mode? (true/false)" "false"
+    if [[ "${USE_WEBHOOK}" == "true" ]]; then
+        prompt_value WEBHOOK_URL "Public webhook URL (https://your-domain.com)"
+    else
+        WEBHOOK_URL=""
+    fi
 }
 
 is_gdoc_source_dir() {
@@ -101,6 +155,7 @@ resolve_install_dir() {
     mkdir -p "$(dirname "${candidate}")"
     git clone --depth 1 --branch "${GIT_BRANCH}" "${GITHUB_REPO}" "${candidate}"
     INSTALL_DIR="${candidate}"
+    chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
 }
 
 update_paths() {
@@ -241,29 +296,15 @@ main() {
     update_paths
     install_system_packages
 
-    local BOT_TOKEN=""
-    local SUPER_ADMIN_ID=""
-    local AI_PROVIDER=""
-    local AI_API_KEY=""
-    local AI_MODEL=""
-    local USE_WEBHOOK=""
-    local WEBHOOK_URL=""
+    local BOT_TOKEN="${BOT_TOKEN:-}"
+    local SUPER_ADMIN_ID="${SUPER_ADMIN_ID:-}"
+    local AI_PROVIDER="${AI_PROVIDER:-}"
+    local AI_API_KEY="${AI_API_KEY:-}"
+    local AI_MODEL="${AI_MODEL:-}"
+    local USE_WEBHOOK="${USE_WEBHOOK:-}"
+    local WEBHOOK_URL="${WEBHOOK_URL:-}"
 
-    prompt_value BOT_TOKEN "Enter Telegram Bot Token (from @BotFather)"
-    prompt_value SUPER_ADMIN_ID "Enter Super Admin Telegram Numeric ID"
-    prompt_value AI_PROVIDER "AI Provider (openai/gemini)" "openai"
-    prompt_value AI_API_KEY "Enter OpenAI/Gemini API Key"
-
-    if [[ "${AI_PROVIDER}" == "gemini" ]]; then
-        prompt_value AI_MODEL "Gemini model name" "gemini-1.5-flash"
-    else
-        prompt_value AI_MODEL "OpenAI model name" "gpt-4o-mini"
-    fi
-
-    prompt_value USE_WEBHOOK "Use webhook mode? (true/false)" "false"
-    if [[ "${USE_WEBHOOK}" == "true" ]]; then
-        prompt_value WEBHOOK_URL "Public webhook URL (https://your-domain.com)"
-    fi
+    collect_config
 
     setup_venv
     write_env_file "${BOT_TOKEN}" "${SUPER_ADMIN_ID}" "${AI_PROVIDER}" "${AI_API_KEY}" "${AI_MODEL}" "${USE_WEBHOOK}" "${WEBHOOK_URL}"

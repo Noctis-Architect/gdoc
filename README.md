@@ -35,17 +35,33 @@ The installer clones the repository (if needed), installs system dependencies, c
 
 ### Option A — One command (recommended)
 
-Run as root on a fresh server. The script clones into `/opt/gdoc` automatically:
+Download the installer, then run it. This keeps your terminal available for the setup prompts:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
+sudo bash /tmp/gdoc-install.sh
 ```
 
 Custom install directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo INSTALL_DIR=/home/gdoc/gdoc bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
+sudo INSTALL_DIR=/home/gdoc/gdoc bash /tmp/gdoc-install.sh
 ```
+
+Pipe one-liner (also supported — prompts read from `/dev/tty`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
+```
+
+Non-interactive install via environment variables:
+
+```bash
+sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" AI_API_KEY="..." bash /tmp/gdoc-install.sh
+```
+
+> **Note:** Use `sudo bash`, not `sudo curl`. Only the installer needs root.
 
 ### Option B — Clone, then install
 
@@ -279,17 +295,33 @@ See repository for license details.
 
 ### روش ۱ — یک دستور (پیشنهادی)
 
-روی سرور تازه، با دسترسی root اجرا کنید. اسکریپت به‌صورت خودکار در `/opt/gdoc` clone می‌کند:
+فایل نصب را دانلود کنید و اجرا کنید تا promptها در ترمینال نمایش داده شوند:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
+sudo bash /tmp/gdoc-install.sh
 ```
 
 مسیر نصب دلخواه:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo INSTALL_DIR=/home/gdoc/gdoc bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh -o /tmp/gdoc-install.sh
+sudo INSTALL_DIR=/home/gdoc/gdoc bash /tmp/gdoc-install.sh
 ```
+
+یک خطی با pipe (پشتیبانی می‌شود — promptها از `/dev/tty` خوانده می‌شوند):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Noctis-Architect/gdoc/main/install.sh | sudo bash
+```
+
+نصب بدون تعامل با متغیر محیطی:
+
+```bash
+sudo BOT_TOKEN="..." SUPER_ADMIN_ID="123456789" AI_API_KEY="..." bash /tmp/gdoc-install.sh
+```
+
+> **نکته:** فقط `bash` را با sudo اجرا کنید، نه `curl` را.
 
 ### روش ۲ — Clone و سپس نصب
 
