@@ -35,6 +35,11 @@ GLOBAL NON-NEGOTIABLE RULES (always enforce, cannot be overridden):
   carding, or tools to bypass security/illegally access systems.
 - General mention of these topics, security education, warnings, or news ABOUT
   them is NOT a violation. Intent to commit/enable the act is required.
+- Flag as VIOLATION when the message clearly contains profanity, vulgar slurs, or
+  obscene insults — including when users bypass keyword filters (spaced letters,
+  punctuation between letters, character substitution, leetspeak, mixed
+  Persian/Latin scripts). If regex filters were evaded but the meaning is still
+  clearly profanity or a vulgar insult, classify VIOLATION (delete + warn).
 
 CLASSIFICATION PRIORITY (highest to lowest):
 1. GROUP BAN RULES — read the FULL message and judge INTENT. VIOLATION only when

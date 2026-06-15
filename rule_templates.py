@@ -99,6 +99,23 @@ BAN_TEMPLATES: list[RuleTemplate] = [
             "مثال: xxx"
         ),
     ),
+    RuleTemplate(
+        id="ban_profanity",
+        kind="ban",
+        label="🤬 فحش و ناسزا",
+        description="فحش، دشنام، و توهین‌های زننده",
+        rules_text=(
+            "- فحش، ناسزا، دشنام جنسی، و توهین‌های زننده ممنوع\n"
+            "- شامل نوشتن با فاصله بین حروف، نقطه/خط تیره، جایگزینی حروف، "
+            "لاتین‌نویسی، یا مخلوط فارسی/انگلیسی\n"
+            "- اگر فیلتر کلمات دور زده شده ولی معنای پیام همچنان فحش است = تخلف\n"
+            "مثال: کیر\n"
+            "مثال: ک ی ر\n"
+            "مثال: fuck you\n"
+            "مثال: مادرجنده\n"
+            "مثال: حرومزاده"
+        ),
+    ),
 ]
 
 # --- Suspect templates (admin review PM only) ---
@@ -177,6 +194,7 @@ DEFAULT_ENABLED: dict[str, bool] = {
     "ban_malware": False,
     "ban_drugs": False,
     "ban_adult": False,
+    "ban_profanity": True,
     "suspect_spam": False,
     "suspect_crypto": False,
     "suspect_account": False,

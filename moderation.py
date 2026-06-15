@@ -10,6 +10,7 @@ from typing import Any, Optional
 from ai import AIClassifier, ClassificationResult
 from database import Database, GroupConfig
 from redis_cache import RedisCache
+from default_profanity import match_default_profanity
 from link_filter import check_link_policy
 from rule_templates import (
     build_ban_rules_text,
@@ -137,6 +138,18 @@ class ModerationEngine:
         if not message_text:
             return None
 
+        builtin_hit = match_default_profanity(message_text)
+        if builtin_hit:
+            return ModerationDecision(
+                flagged=True,
+                classification="VIOLATION",
+                reason=f"فحش یا کلمه نامناسب: {builtin_hit}",
+                layer="regex",
+                should_delete=True,
+                should_warn=True,
+                should_ban=False,
+            )
+
         patterns = await self.get_blacklist_cached(chat_id)
         lowered = message_text.lower()
 
@@ -210,9 +223,8 @@ class ModerationEngine:
                 reason=result.reason,
                 layer="ai",
                 should_delete=True,
-                should_warn=False,
-                should_ban=True,
-                instant_action=True,
+                should_warn=True,
+                should_ban=False,
             )
 
         should_delete = delete_on_violation and group.strictness == "high"
