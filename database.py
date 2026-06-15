@@ -24,7 +24,6 @@ class GroupConfig:
     title: str
     is_authorized: bool
     moderation_enabled: bool
-    ai_enabled: bool = True
     strictness: str
     action_mode: str
     warning_threshold: int
@@ -32,6 +31,7 @@ class GroupConfig:
     suspect_rules: str
     enabled_templates: str = ""
     link_policy: str = "allow_all"
+    ai_enabled: bool = True
 
 
 class Database:
