@@ -50,6 +50,7 @@ def group_admin_panel(chat_id: int, group: dict, *, from_sa: bool = False) -> In
             ),
         ],
         [InlineKeyboardButton(i18n.BTN_BLACKLIST, callback_data=_cb("blacklist", chat_id))],
+        [InlineKeyboardButton(i18n.BTN_LINKS, callback_data=_cb("links", chat_id))],
         [InlineKeyboardButton(i18n.BTN_BANNED, callback_data=_cb("banned", chat_id))],
         [InlineKeyboardButton(i18n.BTN_AUDIT, callback_data=_cb("audit", chat_id))],
         [InlineKeyboardButton(i18n.BTN_STATS, callback_data=_cb("stats", chat_id))],
@@ -167,6 +168,39 @@ def blacklist_keyboard(chat_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("panel", chat_id))],
         ],
     )
+
+
+def links_policy_keyboard(chat_id: int, current: str) -> InlineKeyboardMarkup:
+    from link_filter import LINK_POLICIES
+
+    rows = []
+    for policy in LINK_POLICIES:
+        mark = "✓ " if policy == current else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark}{i18n.link_policy_label(policy)}",
+                    callback_data=_cb("set_link_policy", chat_id, policy),
+                ),
+            ],
+        )
+    rows.append([InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("panel", chat_id))])
+    return InlineKeyboardMarkup(rows)
+
+
+def links_manage_keyboard(chat_id: int, policy: str) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(i18n.BTN_LINK_POLICY, callback_data=_cb("links_policy", chat_id))],
+    ]
+    if policy in ("blocklist", "allowlist"):
+        rows.extend(
+            [
+                [InlineKeyboardButton(i18n.BTN_LINK_ADD, callback_data=_cb("links_add", chat_id))],
+                [InlineKeyboardButton(i18n.BTN_LINK_REMOVE, callback_data=_cb("links_remove", chat_id))],
+            ],
+        )
+    rows.append([InlineKeyboardButton(i18n.BTN_BACK, callback_data=_cb("panel", chat_id))])
+    return InlineKeyboardMarkup(rows)
 
 
 def super_admin_panel() -> InlineKeyboardMarkup:

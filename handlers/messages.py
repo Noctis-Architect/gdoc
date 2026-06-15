@@ -85,9 +85,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     text = update.message.text or update.message.caption or ""
+    entities = update.message.entities or update.message.caption_entities or []
     await ctx.db.increment_messages_processed(chat.id)
 
-    group, decision = await ctx.moderation.evaluate(chat.id, text)
+    group, decision = await ctx.moderation.evaluate(chat.id, text, entities)
     if not decision.flagged:
         return
 
@@ -219,7 +220,7 @@ async def _handle_pending_input(
     input_type = pending["type"]
     chat = update.effective_chat
 
-    if input_type in ("rules_ban", "rules_suspect", "bl_keyword", "bl_regex", "bl_remove"):
+    if input_type in ("rules_ban", "rules_suspect", "bl_keyword", "bl_regex", "bl_remove", "links_add", "links_remove"):
         target_chat_id = pending.get("chat_id")
         if target_chat_id and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
             if chat.id != target_chat_id:
@@ -277,6 +278,34 @@ async def _handle_pending_input(
         await ctx.moderation.invalidate_group_cache(chat_id)
         await _reply_input_result(
             context, user_id, reply_chat_id, i18n.MSG_PATTERN_REMOVED.format(text=text),
+        )
+
+    elif input_type == "links_add":
+        from link_filter import normalize_domain
+
+        chat_id = pending["chat_id"]
+        domain = normalize_domain(text)
+        if not domain or "." not in domain:
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_LINK_DOMAIN_INVALID)
+            return
+        await ctx.db.add_link_domain(chat_id, domain)
+        await ctx.moderation.invalidate_group_cache(chat_id)
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_LINK_DOMAIN_ADDED.format(domain=domain),
+        )
+
+    elif input_type == "links_remove":
+        from link_filter import normalize_domain
+
+        chat_id = pending["chat_id"]
+        domain = normalize_domain(text)
+        if not domain:
+            await _reply_input_result(context, user_id, reply_chat_id, i18n.MSG_LINK_DOMAIN_INVALID)
+            return
+        await ctx.db.remove_link_domain(chat_id, domain)
+        await ctx.moderation.invalidate_group_cache(chat_id)
+        await _reply_input_result(
+            context, user_id, reply_chat_id, i18n.MSG_LINK_DOMAIN_REMOVED.format(domain=domain),
         )
 
     elif input_type == "sa_apikey":

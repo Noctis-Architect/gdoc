@@ -30,6 +30,7 @@ class GroupConfig:
     custom_rules: str
     suspect_rules: str
     enabled_templates: str = ""
+    link_policy: str = "allow_all"
 
 
 class Database:
@@ -152,6 +153,7 @@ class Database:
                 custom_rules TEXT NOT NULL DEFAULT '',
                 suspect_rules TEXT NOT NULL DEFAULT '',
                 enabled_templates TEXT NOT NULL DEFAULT '',
+                link_policy TEXT NOT NULL DEFAULT 'allow_all',
                 bot_is_admin INTEGER NOT NULL DEFAULT 0,
                 messages_processed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
@@ -233,6 +235,16 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_logs(chat_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_warnings_user ON user_warnings(user_id);
             CREATE INDEX IF NOT EXISTS idx_blacklist_chat ON group_blacklist(chat_id);
+
+            CREATE TABLE IF NOT EXISTS group_link_domains (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                domain TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(chat_id, domain)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_link_domains_chat ON group_link_domains(chat_id);
             """
         )
 
@@ -260,6 +272,7 @@ class Database:
                 custom_rules TEXT NOT NULL DEFAULT '',
                 suspect_rules TEXT NOT NULL DEFAULT '',
                 enabled_templates TEXT NOT NULL DEFAULT '',
+                link_policy TEXT NOT NULL DEFAULT 'allow_all',
                 bot_is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                 messages_processed INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL,
@@ -332,6 +345,14 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_audit_chat ON audit_logs(chat_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_warnings_user ON user_warnings(user_id);
             CREATE INDEX IF NOT EXISTS idx_blacklist_chat ON group_blacklist(chat_id);
+            CREATE TABLE IF NOT EXISTS group_link_domains (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                domain TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                UNIQUE(chat_id, domain)
+            );
+            CREATE INDEX IF NOT EXISTS idx_link_domains_chat ON group_link_domains(chat_id);
             """
         )
 
@@ -368,6 +389,25 @@ class Database:
             await self._conn.execute(
                 "ALTER TABLE groups ADD COLUMN enabled_templates TEXT NOT NULL DEFAULT ''",
             )
+        if "link_policy" not in group_names:
+            await self._conn.execute(
+                "ALTER TABLE groups ADD COLUMN link_policy TEXT NOT NULL DEFAULT 'allow_all'",
+            )
+
+        await self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS group_link_domains (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                domain TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(chat_id, domain)
+            )
+            """,
+        )
+        await self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_link_domains_chat ON group_link_domains(chat_id)",
+        )
 
     async def _migrate_schema_postgres(self, conn: Any) -> None:
         await conn.execute(
@@ -378,6 +418,15 @@ class Database:
             ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'auto';
             ALTER TABLE groups ADD COLUMN IF NOT EXISTS suspect_rules TEXT NOT NULL DEFAULT '';
             ALTER TABLE groups ADD COLUMN IF NOT EXISTS enabled_templates TEXT NOT NULL DEFAULT '';
+            ALTER TABLE groups ADD COLUMN IF NOT EXISTS link_policy TEXT NOT NULL DEFAULT 'allow_all';
+            CREATE TABLE IF NOT EXISTS group_link_domains (
+                id SERIAL PRIMARY KEY,
+                chat_id BIGINT NOT NULL,
+                domain TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                UNIQUE(chat_id, domain)
+            );
+            CREATE INDEX IF NOT EXISTS idx_link_domains_chat ON group_link_domains(chat_id);
             """,
         )
 
@@ -614,6 +663,7 @@ class Database:
             custom_rules=row["custom_rules"] or "",
             suspect_rules=row.get("suspect_rules") or "",
             enabled_templates=row.get("enabled_templates") or "",
+            link_policy=row.get("link_policy") or "allow_all",
         )
 
     async def update_group_field(self, chat_id: int, field: str, value: Any) -> None:
@@ -625,6 +675,7 @@ class Database:
             "custom_rules",
             "suspect_rules",
             "enabled_templates",
+            "link_policy",
             "is_authorized",
             "bot_is_admin",
         }
@@ -749,6 +800,31 @@ class Database:
         await self._execute(
             "DELETE FROM group_blacklist WHERE chat_id = ? AND pattern = ?",
             (chat_id, pattern),
+        )
+        await self._commit()
+
+    async def get_link_domains(self, chat_id: int) -> list[str]:
+        rows = await self._fetchall(
+            "SELECT domain FROM group_link_domains WHERE chat_id = ? ORDER BY id",
+            (chat_id,),
+        )
+        return [r["domain"] for r in rows]
+
+    async def add_link_domain(self, chat_id: int, domain: str) -> None:
+        await self._execute(
+            """
+            INSERT INTO group_link_domains (chat_id, domain, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(chat_id, domain) DO NOTHING
+            """,
+            (chat_id, domain, utcnow().isoformat()),
+        )
+        await self._commit()
+
+    async def remove_link_domain(self, chat_id: int, domain: str) -> None:
+        await self._execute(
+            "DELETE FROM group_link_domains WHERE chat_id = ? AND domain = ?",
+            (chat_id, domain),
         )
         await self._commit()
 

@@ -69,8 +69,39 @@ class RedisCache:
         try:
             await self._client.delete(self._key(f"group:{chat_id}"))
             await self._client.delete(self._key(f"blacklist:{chat_id}"))
+            await self._client.delete(self._key(f"link_domains:{chat_id}"))
         except Exception as exc:
             logger.debug("Redis invalidate_group_config failed: %s", exc)
+
+    async def get_link_domains(self, chat_id: int) -> Optional[list[str]]:
+        if not self._available or not self._client:
+            return None
+        try:
+            raw = await self._client.get(self._key(f"link_domains:{chat_id}"))
+            return json.loads(raw) if raw else None
+        except Exception as exc:
+            logger.debug("Redis get_link_domains failed: %s", exc)
+            return None
+
+    async def set_link_domains(self, chat_id: int, domains: list[str]) -> None:
+        if not self._available or not self._client:
+            return
+        try:
+            await self._client.setex(
+                self._key(f"link_domains:{chat_id}"),
+                Config.CACHE_TTL_SECONDS,
+                json.dumps(domains),
+            )
+        except Exception as exc:
+            logger.debug("Redis set_link_domains failed: %s", exc)
+
+    async def invalidate_link_domains(self, chat_id: int) -> None:
+        if not self._available or not self._client:
+            return
+        try:
+            await self._client.delete(self._key(f"link_domains:{chat_id}"))
+        except Exception as exc:
+            logger.debug("Redis invalidate_link_domains failed: %s", exc)
 
     async def get_blacklist(self, chat_id: int) -> Optional[list[dict[str, Any]]]:
         if not self._available or not self._client:

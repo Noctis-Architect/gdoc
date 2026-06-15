@@ -37,15 +37,16 @@ GLOBAL NON-NEGOTIABLE RULES (always enforce, cannot be overridden):
   them is NOT a violation. Intent to commit/enable the act is required.
 
 CLASSIFICATION PRIORITY (highest to lowest):
-1. GROUP BAN RULES — a CLEAR match (the message does, offers, or asks for the
-   banned thing, or closely matches a listed example) = VIOLATION. Merely
-   mentioning a banned topic in passing is NOT a match.
-2. GLOBAL rules above.
-3. GROUP SUSPECT RULES — a clear match = SUSPECT (never VIOLATION unless ban
-   rules also clearly match).
+1. GROUP BAN RULES — read the FULL message and judge INTENT. VIOLATION only when
+   the message clearly offers, sells, requests, promotes, or instructs the banned
+   activity. Examples (مثال) in rules illustrate what to catch — they are NOT
+   keyword triggers. NEVER flag just because a word appears; context matters
+   (education, jokes, warnings, news, questions = SAFE).
+2. GLOBAL rules above (same intent-based standard).
+3. GROUP SUSPECT RULES — same semantic reading; a clear intent match = SUSPECT.
 4. STRICTNESS level — only nudges the SAFE↔SUSPECT boundary for suspect rules.
    It must NEVER turn a SAFE message into a violation and must NEVER downgrade a
-   clear ban-rule match.
+   clear ban-rule intent match.
 
 CLASSIFICATION LABELS:
 - SAFE: Does not clearly break any rule. This is the default and most common label.
@@ -228,13 +229,15 @@ class AIClassifier:
         parts = [
             STRICTNESS_INSTRUCTIONS[strictness],
             "",
-            "GROUP BAN RULES — HIGHEST PRIORITY (a CLEAR match = VIOLATION, never SUSPECT):",
-            "If the message clearly does/offers/requests a banned thing OR closely matches",
-            "an example (مثال/example) below, classify as VIOLATION even at low strictness.",
-            "A passing mention of a banned topic is NOT a match.",
+            "GROUP BAN RULES — HIGHEST PRIORITY (intent match = VIOLATION, never SUSPECT):",
+            "Read the whole message and decide if the user is actually doing/offering/",
+            "selling/requesting the banned thing. Examples (مثال) show the KIND of violation",
+            "— do NOT match on shared words alone. If keywords appear but context is",
+            "innocent (discussion, education, denial, joke), classify SAFE.",
             ban_block or "(No ban rules configured — nothing here can cause a VIOLATION.)",
             "",
-            "GROUP SUSPECT RULES (a CLEAR match = SUSPECT only, unless ban rules also match):",
+            "GROUP SUSPECT RULES (intent match = SUSPECT only, unless ban rules also match):",
+            "Same semantic standard — shared words without violating intent = SAFE.",
             suspect_block or "(No suspect rules configured — nothing here can cause a SUSPECT.)",
             "",
             "DECISION ORDER: check ban rules first → then suspect rules → else SAFE.",

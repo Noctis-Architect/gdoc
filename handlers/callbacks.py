@@ -115,6 +115,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "bl_add_kw": _prompt_blacklist_keyword,
         "bl_add_rx": _prompt_blacklist_regex,
         "bl_remove": _prompt_blacklist_remove,
+        "links": _show_links,
+        "links_policy": _show_links_policy,
+        "set_link_policy": _set_link_policy,
+        "links_add": _prompt_link_add,
+        "links_remove": _prompt_link_remove,
         "audit": _show_audit,
         "stats": _show_group_stats,
         "banned": _show_banned_users,
@@ -569,6 +574,53 @@ async def _show_blacklist(query, ctx: BotContext, chat_id: int, _extra: str, _co
         i18n.format_blacklist_header(lines),
         reply_markup=keyboards.blacklist_keyboard(chat_id),
         parse_mode="Markdown",
+    )
+
+
+async def _show_links(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    policy = (group or {}).get("link_policy", "allow_all")
+    domains = await ctx.db.get_link_domains(chat_id)
+    await query.edit_message_text(
+        i18n.format_links_header(policy, domains),
+        reply_markup=keyboards.links_manage_keyboard(chat_id, policy),
+        parse_mode="Markdown",
+    )
+
+
+async def _show_links_policy(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    current = (group or {}).get("link_policy", "allow_all")
+    await query.edit_message_text(
+        i18n.PROMPT_LINKS,
+        reply_markup=keyboards.links_policy_keyboard(chat_id, current),
+    )
+
+
+async def _set_link_policy(query, ctx: BotContext, chat_id: int, extra: str, _context) -> None:
+    from link_filter import LINK_POLICIES
+
+    if extra not in LINK_POLICIES:
+        return
+    await ctx.db.update_group_field(chat_id, "link_policy", extra)
+    await ctx.moderation.invalidate_group_cache(chat_id)
+    await _show_links(query, ctx, chat_id, "", _context)
+
+
+async def _prompt_link_add(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    ctx.pending_inputs[query.from_user.id] = {"type": "links_add", "chat_id": chat_id}
+    await query.edit_message_text(
+        i18n.PROMPT_LINK_ADD,
+        reply_markup=await _back_kb(chat_id, query, ctx),
+        parse_mode="Markdown",
+    )
+
+
+async def _prompt_link_remove(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    ctx.pending_inputs[query.from_user.id] = {"type": "links_remove", "chat_id": chat_id}
+    await query.edit_message_text(
+        i18n.PROMPT_LINK_REMOVE,
+        reply_markup=await _back_kb(chat_id, query, ctx),
     )
 
 

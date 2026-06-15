@@ -28,9 +28,21 @@ LAYER_FA = {
     "regex": "فیلتر محلی",
     "ban_rules": "بن مستقیم",
     "suspect_rules": "قوانین مشکوک",
+    "link_filter": "مدیریت لینک",
     "ai": "هوش مصنوعی",
     "none": "—",
 }
+
+LINK_POLICY_FA = {
+    "allow_all": "همه لینک‌ها مجاز",
+    "block_all": "هیچ لینکی مجاز نیست",
+    "blocklist": "همه مجاز به‌جز سایت‌های مشخص",
+    "allowlist": "فقط سایت‌های مشخص مجاز",
+}
+
+
+def link_policy_label(policy: str) -> str:
+    return LINK_POLICY_FA.get(policy, policy)
 
 
 def strictness_label(level: str) -> str:
@@ -121,13 +133,15 @@ def format_group_panel_header(group: dict) -> str:
     authorized = authorized_status(bool(group.get("is_authorized")))
     strictness = strictness_label(group.get("strictness", "medium"))
     threshold = group.get("warning_threshold", 3)
+    link_policy = link_policy_label(group.get("link_policy", "allow_all"))
     return (
         f"⚙️ **پنل مدیریت گروه**\n"
         f"📌 {title}\n"
         f"وضعیت moderation: {enabled}\n"
         f"وضعیت ربات: {authorized}\n"
         f"سطح سختی: **{strictness}**\n"
-        f"اخطار تا بن: **{threshold}**"
+        f"اخطار تا بن: **{threshold}**\n"
+        f"مدیریت لینک: **{link_policy}**"
     )
 
 
@@ -144,6 +158,7 @@ BTN_ACTION = "⚡ عملکرد پیام مشکوک"
 BTN_THRESHOLD = "⚠️ آستانه اخطار"
 BTN_MODERATION = "🤖 moderation"
 BTN_BLACKLIST = "🚫 لیست سیاه"
+BTN_LINKS = "🔗 مدیریت لینک"
 BTN_AUDIT = "📋 گزارش تخلفات"
 BTN_BANNED = "🔨 کاربران بن‌شده"
 BTN_STATS = "📊 آمار پیام‌ها"
@@ -153,6 +168,10 @@ BTN_BACK = "⬅️ بازگشت"
 BTN_BL_ADD_KW = "➕ افزودن کلمه"
 BTN_BL_ADD_RX = "➕ افزودن Regex"
 BTN_BL_REMOVE = "➖ حذف الگو"
+
+BTN_LINK_ADD = "➕ افزودن سایت"
+BTN_LINK_REMOVE = "➖ حذف سایت"
+BTN_LINK_POLICY = "⚙️ تغییر حالت"
 
 BTN_SA_STATS = "📊 آمار سراسری"
 BTN_SA_GROUPS = "👥 همه گروه‌ها"
@@ -195,13 +214,13 @@ PROMPT_THRESHOLD = "حداکثر تعداد اخطار قبل از بن خودک
 PROMPT_RULES = (
     "نوع قوانین را انتخاب کنید:\n\n"
     "📦 **تمپلیت‌های آماده** — هک، VPN، کلاهبرداری و… (فعال/غیرفعال)\n"
-    "🔨 **بن مستقیم** — نقض = حذف پیام + بن فوری\n"
+    "🔨 **بن مستقیم** — نقض = بن فوری توسط AI (بر اساس قصد، نه کلمه)\n"
     "🔍 **مشکوک** — نقض = فقط اطلاع در پیوی ادمین"
 )
 PROMPT_RULES_BAN = (
     "قوانین **بن مستقیم** را ارسال کنید.\n"
-    "نقض هر کدام = تخلف و بن فوری کاربر.\n"
-    "برای هر قانون حتماً **مثال:** بنویسید تا ربات دقیق تشخیص دهد.\n"
+    "نقض = بن فوری (هوش مصنوعی **معنا و قصد** پیام را می‌خواند، نه فقط کلمه).\n"
+    "برای هر قانون **مثال:** بنویسید تا AI بداند چه نوع پیامی تخلف است.\n"
     "مثال:\n"
     "`- فروش اکانت ممنوع`\n"
     "`مثال: میفروشم اکانتم`\n"
@@ -224,7 +243,7 @@ PROMPT_TEMPLATES = (
 
 PROMPT_TEMPLATES_BAN = (
     "🔨 **تمپلیت‌های بن مستقیم**\n"
-    "نقض = حذف پیام + بن فوری (بدون نیاز به تأیید ادمین)"
+    "نقض = بن فوری توسط AI (بر اساس قصد پیام، نه تطبیق کلمه)"
 )
 
 PROMPT_TEMPLATES_SUSPECT = (
@@ -241,6 +260,17 @@ PROMPT_BL_REGEX = (
 )
 PROMPT_BL_REMOVE = (
     "متن دقیق الگویی که می‌خواهید حذف شود را ارسال کنید.\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
+)
+
+PROMPT_LINKS = "سیاست ارسال لینک در گروه را انتخاب کنید:"
+PROMPT_LINK_ADD = (
+    "دامنه یا آدرس سایت را ارسال کنید.\n"
+    "مثال: `example.com` یا `https://t.me/channel`\n"
+    "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
+)
+PROMPT_LINK_REMOVE = (
+    "دامنه دقیقی که می‌خواهید از لیست حذف شود را ارسال کنید.\n"
     "می‌توانید همین‌جا در گروه یا در چت خصوصی با ربات بنویسید."
 )
 
@@ -270,6 +300,30 @@ def format_blacklist_header(lines: list[str]) -> str:
 def format_blacklist_item(pattern: str, is_regex: bool) -> str:
     kind = "regex" if is_regex else "کلمه"
     return f"• [{kind}] `{pattern}`"
+
+
+def format_links_header(policy: str, domains: list[str]) -> str:
+    policy_label = link_policy_label(policy)
+    if policy in ("blocklist", "allowlist"):
+        if domains:
+            domain_lines = "\n".join(f"• `{d}`" for d in domains)
+        else:
+            empty_hint = (
+                "_هنوز سایتی ثبت نشده — همه لینک‌ها مجازند._"
+                if policy == "blocklist"
+                else "_هنوز سایتی ثبت نشده — هیچ لینکی مجاز نیست._"
+            )
+            domain_lines = empty_hint
+        list_title = "سایت‌های ممنوع" if policy == "blocklist" else "سایت‌های مجاز"
+        return (
+            f"🔗 **مدیریت لینک**\n\n"
+            f"حالت فعلی: **{policy_label}**\n\n"
+            f"**{list_title}:**\n{domain_lines}"
+        )
+    return (
+        f"🔗 **مدیریت لینک**\n\n"
+        f"حالت فعلی: **{policy_label}**"
+    )
 
 
 MSG_AUDIT_EMPTY = "📋 هنوز پیام پرچم‌گذاری‌شده‌ای ثبت نشده."
@@ -514,6 +568,9 @@ MSG_TEMPLATE_TOGGLED = "✅ تمپلیت **{label}** {status} شد."
 MSG_KEYWORD_ADDED = "✅ کلمه اضافه شد: `{text}`"
 MSG_REGEX_ADDED = "✅ Regex اضافه شد: `{text}`"
 MSG_PATTERN_REMOVED = "✅ الگو حذف شد: `{text}`"
+MSG_LINK_DOMAIN_ADDED = "✅ سایت اضافه شد: `{domain}`"
+MSG_LINK_DOMAIN_REMOVED = "✅ سایت حذف شد: `{domain}`"
+MSG_LINK_DOMAIN_INVALID = "❌ دامنه نامعتبر است. مثال: `example.com`"
 MSG_APIKEY_UPDATED = "✅ کلید API بروزرسانی شد."
 MSG_PROVIDER_UPDATED = "✅ پرووایدر AI به **{provider}** تغییر کرد."
 MSG_BASEURL_UPDATED = "✅ Base URL ذخیره شد: `{url}`"

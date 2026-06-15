@@ -10,7 +10,7 @@ from typing import Any, Optional
 from ai import AIClassifier, ClassificationResult
 from database import Database, GroupConfig
 from redis_cache import RedisCache
-from rule_matcher import match_direct_ban_rules, match_rule_examples
+from link_filter import check_link_policy
 from rule_templates import (
     build_ban_rules_text,
     build_suspect_rules_text,
@@ -66,6 +66,7 @@ class ModerationEngine:
                 custom_rules=cached.get("custom_rules", ""),
                 suspect_rules=cached.get("suspect_rules", ""),
                 enabled_templates=cached.get("enabled_templates", ""),
+                link_policy=cached.get("link_policy", "allow_all"),
             )
         group = await self.db.get_group(chat_id)
         if group:
@@ -82,6 +83,7 @@ class ModerationEngine:
                     "custom_rules": group.custom_rules,
                     "suspect_rules": group.suspect_rules,
                     "enabled_templates": group.enabled_templates,
+                    "link_policy": group.link_policy,
                 },
             )
         return group
@@ -93,6 +95,39 @@ class ModerationEngine:
         patterns = await self.db.get_blacklist(chat_id)
         await self.cache.set_blacklist(chat_id, patterns)
         return patterns
+
+    async def get_link_domains_cached(self, chat_id: int) -> list[str]:
+        cached = await self.cache.get_link_domains(chat_id)
+        if cached is not None:
+            return cached
+        domains = await self.db.get_link_domains(chat_id)
+        await self.cache.set_link_domains(chat_id, domains)
+        return domains
+
+    async def check_links(
+        self,
+        chat_id: int,
+        group: GroupConfig,
+        message_text: str,
+        entities: list | None = None,
+    ) -> Optional[ModerationDecision]:
+        if group.link_policy == "allow_all":
+            return None
+
+        domains = await self.get_link_domains_cached(chat_id)
+        reason = check_link_policy(group.link_policy, domains, message_text, entities)
+        if not reason:
+            return None
+
+        return ModerationDecision(
+            flagged=True,
+            classification="VIOLATION",
+            reason=reason,
+            layer="link_filter",
+            should_delete=True,
+            should_warn=True,
+            should_ban=False,
+        )
 
     async def check_layer1(
         self,
@@ -129,58 +164,6 @@ class ModerationEngine:
                     should_ban=False,
                 )
         return None
-
-    def check_ban_rules(
-        self,
-        ban_rules_text: str,
-        message_text: str,
-    ) -> Optional[ModerationDecision]:
-        match = match_direct_ban_rules(message_text, ban_rules_text)
-        if not match:
-            return None
-
-        if match.instant_ban:
-            return ModerationDecision(
-                flagged=True,
-                classification="VIOLATION",
-                reason=match.reason,
-                layer="ban_rules",
-                should_delete=True,
-                should_warn=False,
-                should_ban=True,
-                instant_action=True,
-            )
-
-        return ModerationDecision(
-            flagged=True,
-            classification="VIOLATION",
-            reason=match.reason,
-            layer="ban_rules",
-            should_delete=True,
-            should_warn=True,
-            should_ban=False,
-        )
-
-    def check_suspect_rules(
-        self,
-        suspect_rules_text: str,
-        message_text: str,
-        group: GroupConfig,
-    ) -> Optional[ModerationDecision]:
-        reason = match_rule_examples(message_text, suspect_rules_text, "مشکوک")
-        if not reason:
-            return None
-
-        delete_on_violation = group.action_mode == "delete_flag"
-        return ModerationDecision(
-            flagged=True,
-            classification="SUSPECT",
-            reason=reason,
-            layer="suspect_rules",
-            should_delete=delete_on_violation and group.strictness == "high",
-            should_warn=group.strictness in ("medium", "high") and group.action_mode == "delete_flag",
-            should_ban=False,
-        )
 
     async def check_layer2(
         self,
@@ -221,13 +204,20 @@ class ModerationEngine:
 
         delete_on_violation = group.action_mode == "delete_flag"
         if result.classification == "VIOLATION":
-            should_delete = True
-            should_warn = True
-            should_ban = False
-        else:
-            should_delete = delete_on_violation and group.strictness == "high"
-            should_warn = group.strictness in ("medium", "high") and delete_on_violation
-            should_ban = False
+            return ModerationDecision(
+                flagged=True,
+                classification=result.classification,
+                reason=result.reason,
+                layer="ai",
+                should_delete=True,
+                should_warn=False,
+                should_ban=True,
+                instant_action=True,
+            )
+
+        should_delete = delete_on_violation and group.strictness == "high"
+        should_warn = group.strictness in ("medium", "high") and delete_on_violation
+        should_ban = False
 
         return ModerationDecision(
             flagged=True,
@@ -259,6 +249,7 @@ class ModerationEngine:
         self,
         chat_id: int,
         message_text: str,
+        entities: list | None = None,
     ) -> tuple[Optional[GroupConfig], ModerationDecision]:
         group = await self.get_group_config_cached(chat_id)
         if not group or not group.is_authorized or not group.moderation_enabled:
@@ -273,6 +264,12 @@ class ModerationEngine:
             )
 
         _, ban_rules_text, suspect_rules_text = self._resolve_rules(group)
+
+        link_hit = await self.check_links(chat_id, group, message_text, entities)
+        if link_hit:
+            if group.action_mode == "keep_alert":
+                return group, self._apply_keep_alert(link_hit)
+            return group, link_hit
 
         layer1 = await self.check_layer1(chat_id, message_text)
         if layer1:
@@ -291,16 +288,6 @@ class ModerationEngine:
                 should_ban=False,
             )
 
-        ban_hit = self.check_ban_rules(ban_rules_text, message_text)
-        if ban_hit:
-            return group, ban_hit
-
-        suspect_hit = self.check_suspect_rules(suspect_rules_text, message_text, group)
-        if suspect_hit:
-            if group.action_mode == "keep_alert":
-                return group, self._apply_keep_alert(suspect_hit)
-            return group, suspect_hit
-
         layer2 = await self.check_layer2(
             group, message_text, ban_rules_text, suspect_rules_text,
         )
@@ -310,3 +297,4 @@ class ModerationEngine:
 
     async def invalidate_group_cache(self, chat_id: int) -> None:
         await self.cache.invalidate_group_config(chat_id)
+        await self.cache.invalidate_link_domains(chat_id)
