@@ -135,19 +135,30 @@ class ModerationEngine:
         ban_rules_text: str,
         message_text: str,
     ) -> Optional[ModerationDecision]:
-        reason = match_direct_ban_rules(message_text, ban_rules_text)
-        if not reason:
+        match = match_direct_ban_rules(message_text, ban_rules_text)
+        if not match:
             return None
+
+        if match.instant_ban:
+            return ModerationDecision(
+                flagged=True,
+                classification="VIOLATION",
+                reason=match.reason,
+                layer="ban_rules",
+                should_delete=True,
+                should_warn=False,
+                should_ban=True,
+                instant_action=True,
+            )
 
         return ModerationDecision(
             flagged=True,
             classification="VIOLATION",
-            reason=reason,
+            reason=match.reason,
             layer="ban_rules",
             should_delete=True,
-            should_warn=False,
-            should_ban=True,
-            instant_action=True,
+            should_warn=True,
+            should_ban=False,
         )
 
     def check_suspect_rules(
@@ -210,18 +221,7 @@ class ModerationEngine:
 
         delete_on_violation = group.action_mode == "delete_flag"
         if result.classification == "VIOLATION":
-            if ban_rules_text.strip():
-                return ModerationDecision(
-                    flagged=True,
-                    classification="VIOLATION",
-                    reason=result.reason,
-                    layer="ai",
-                    should_delete=True,
-                    should_warn=False,
-                    should_ban=True,
-                    instant_action=True,
-                )
-            should_delete = delete_on_violation
+            should_delete = True
             should_warn = True
             should_ban = False
         else:
