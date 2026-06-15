@@ -309,6 +309,7 @@ resolve_install_dir() {
     git clone --depth 1 --branch "${GIT_BRANCH}" "${GITHUB_REPO}" "${candidate}"
     INSTALL_DIR="${candidate}"
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/uninstall.sh" 2>/dev/null || true
     finalize_install_dir
 }
 
