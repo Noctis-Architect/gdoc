@@ -20,6 +20,19 @@ from rule_templates import (
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class ModerationDecision:
+    flagged: bool
+    classification: str
+    reason: str
+    layer: str
+    should_delete: bool
+    should_warn: bool
+    should_ban: bool
+    instant_action: bool = False
+
+
 _SAFE_DISABLED = ModerationDecision(
     flagged=False,
     classification="SAFE",
@@ -59,18 +72,6 @@ _SAFE_NO_RULES = ModerationDecision(
     should_warn=False,
     should_ban=False,
 )
-
-
-@dataclass
-class ModerationDecision:
-    flagged: bool
-    classification: str
-    reason: str
-    layer: str
-    should_delete: bool
-    should_warn: bool
-    should_ban: bool
-    instant_action: bool = False
 
 
 class ModerationEngine:
@@ -300,8 +301,6 @@ class ModerationEngine:
                 should_warn=False,
                 should_ban=False,
             )
-        return decision
-
         return decision
 
     async def evaluate_instant(
