@@ -45,6 +45,8 @@ class Config:
     WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "")
 
     AI_CONCURRENCY: int = int(os.getenv("AI_CONCURRENCY", "10"))
+    AI_REQUEST_TIMEOUT: float = float(os.getenv("AI_REQUEST_TIMEOUT", "25"))
+    CONCURRENT_UPDATES: int = int(os.getenv("CONCURRENT_UPDATES", "64"))
     DB_WRITE_CONCURRENCY: int = int(os.getenv("DB_WRITE_CONCURRENCY", "5"))
 
     NOTIFY_QUEUE_DELAY_SECONDS: float = float(os.getenv("NOTIFY_QUEUE_DELAY_SECONDS", "0.15"))

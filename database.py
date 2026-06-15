@@ -24,6 +24,7 @@ class GroupConfig:
     title: str
     is_authorized: bool
     moderation_enabled: bool
+    ai_enabled: bool = True
     strictness: str
     action_mode: str
     warning_threshold: int
@@ -147,6 +148,7 @@ class Database:
                 title TEXT NOT NULL DEFAULT '',
                 is_authorized INTEGER NOT NULL DEFAULT 1,
                 moderation_enabled INTEGER NOT NULL DEFAULT 1,
+                ai_enabled INTEGER NOT NULL DEFAULT 1,
                 strictness TEXT NOT NULL DEFAULT 'medium',
                 action_mode TEXT NOT NULL DEFAULT 'keep_alert',
                 warning_threshold INTEGER NOT NULL DEFAULT 3,
@@ -266,6 +268,7 @@ class Database:
                 title TEXT NOT NULL DEFAULT '',
                 is_authorized BOOLEAN NOT NULL DEFAULT TRUE,
                 moderation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                ai_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                 strictness TEXT NOT NULL DEFAULT 'medium',
                 action_mode TEXT NOT NULL DEFAULT 'keep_alert',
                 warning_threshold INTEGER NOT NULL DEFAULT 3,
@@ -393,6 +396,10 @@ class Database:
             await self._conn.execute(
                 "ALTER TABLE groups ADD COLUMN link_policy TEXT NOT NULL DEFAULT 'allow_all'",
             )
+        if "ai_enabled" not in group_names:
+            await self._conn.execute(
+                "ALTER TABLE groups ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 1",
+            )
 
         await self._conn.execute(
             """
@@ -419,6 +426,7 @@ class Database:
             ALTER TABLE groups ADD COLUMN IF NOT EXISTS suspect_rules TEXT NOT NULL DEFAULT '';
             ALTER TABLE groups ADD COLUMN IF NOT EXISTS enabled_templates TEXT NOT NULL DEFAULT '';
             ALTER TABLE groups ADD COLUMN IF NOT EXISTS link_policy TEXT NOT NULL DEFAULT 'allow_all';
+            ALTER TABLE groups ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN NOT NULL DEFAULT TRUE;
             CREATE TABLE IF NOT EXISTS group_link_domains (
                 id SERIAL PRIMARY KEY,
                 chat_id BIGINT NOT NULL,
@@ -657,6 +665,7 @@ class Database:
             title=row["title"],
             is_authorized=bool(row["is_authorized"]),
             moderation_enabled=bool(row["moderation_enabled"]),
+            ai_enabled=bool(row.get("ai_enabled", 1)),
             strictness=row["strictness"],
             action_mode=row["action_mode"],
             warning_threshold=row["warning_threshold"],
@@ -669,6 +678,7 @@ class Database:
     async def update_group_field(self, chat_id: int, field: str, value: Any) -> None:
         allowed = {
             "moderation_enabled",
+            "ai_enabled",
             "strictness",
             "action_mode",
             "warning_threshold",

@@ -130,6 +130,7 @@ MSG_SUPER_PANEL = "🛡 **پنل کنترل مالک — gdoc**"
 def format_group_panel_header(group: dict) -> str:
     title = group.get("title") or "گروه"
     enabled = "✅ فعال" if group.get("moderation_enabled") else "⏸ متوقف"
+    ai_enabled = "✅ فعال" if group.get("ai_enabled", True) else "❌ غیرفعال"
     authorized = authorized_status(bool(group.get("is_authorized")))
     strictness = strictness_label(group.get("strictness", "medium"))
     threshold = group.get("warning_threshold", 3)
@@ -138,6 +139,7 @@ def format_group_panel_header(group: dict) -> str:
         f"⚙️ **پنل مدیریت گروه**\n"
         f"📌 {title}\n"
         f"وضعیت moderation: {enabled}\n"
+        f"بررسی هوش مصنوعی: {ai_enabled}\n"
         f"وضعیت ربات: {authorized}\n"
         f"سطح سختی: **{strictness}**\n"
         f"اخطار تا بن: **{threshold}**\n"
@@ -157,6 +159,7 @@ BTN_STRICTNESS = "🎚 سطح سختی"
 BTN_ACTION = "⚡ عملکرد پیام مشکوک"
 BTN_THRESHOLD = "⚠️ آستانه اخطار"
 BTN_MODERATION = "🤖 moderation"
+BTN_AI = "🧠 بررسی هوش مصنوعی"
 BTN_BLACKLIST = "🚫 لیست سیاه"
 BTN_LINKS = "🔗 مدیریت لینک"
 BTN_AUDIT = "📋 گزارش تخلفات"

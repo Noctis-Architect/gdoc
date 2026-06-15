@@ -20,6 +20,46 @@ from rule_templates import (
 
 logger = logging.getLogger(__name__)
 
+_SAFE_DISABLED = ModerationDecision(
+    flagged=False,
+    classification="SAFE",
+    reason="Moderation disabled or group unauthorized",
+    layer="none",
+    should_delete=False,
+    should_warn=False,
+    should_ban=False,
+)
+
+_SAFE_EMPTY = ModerationDecision(
+    flagged=False,
+    classification="SAFE",
+    reason="Non-text message",
+    layer="none",
+    should_delete=False,
+    should_warn=False,
+    should_ban=False,
+)
+
+_SAFE_NO_AI = ModerationDecision(
+    flagged=False,
+    classification="SAFE",
+    reason="AI moderation disabled",
+    layer="none",
+    should_delete=False,
+    should_warn=False,
+    should_ban=False,
+)
+
+_SAFE_NO_RULES = ModerationDecision(
+    flagged=False,
+    classification="SAFE",
+    reason="No rules configured",
+    layer="ai",
+    should_delete=False,
+    should_warn=False,
+    should_ban=False,
+)
+
 
 @dataclass
 class ModerationDecision:
@@ -61,6 +101,7 @@ class ModerationEngine:
                 title=cached.get("title", ""),
                 is_authorized=cached.get("is_authorized", True),
                 moderation_enabled=cached.get("moderation_enabled", True),
+                ai_enabled=cached.get("ai_enabled", True),
                 strictness=cached.get("strictness", "medium"),
                 action_mode=cached.get("action_mode", "keep_alert"),
                 warning_threshold=cached.get("warning_threshold", 3),
@@ -78,6 +119,7 @@ class ModerationEngine:
                     "title": group.title,
                     "is_authorized": group.is_authorized,
                     "moderation_enabled": group.moderation_enabled,
+                    "ai_enabled": group.ai_enabled,
                     "strictness": group.strictness,
                     "action_mode": group.action_mode,
                     "warning_threshold": group.warning_threshold,
@@ -185,6 +227,9 @@ class ModerationEngine:
         ban_rules_text: str,
         suspect_rules_text: str,
     ) -> ModerationDecision:
+        if not group.ai_enabled:
+            return _SAFE_NO_AI
+
         if not ban_rules_text.strip() and not suspect_rules_text.strip():
             return ModerationDecision(
                 flagged=False,
@@ -257,55 +302,74 @@ class ModerationEngine:
             )
         return decision
 
+        return decision
+
+    async def evaluate_instant(
+        self,
+        chat_id: int,
+        message_text: str,
+        entities: list | None = None,
+    ) -> tuple[Optional[GroupConfig], Optional[ModerationDecision]]:
+        """Fast path: links + regex/blacklist. Returns None decision when AI is needed."""
+        group = await self.get_group_config_cached(chat_id)
+        if not group or not group.is_authorized or not group.moderation_enabled:
+            return group, _SAFE_DISABLED
+
+        link_hit = await self.check_links(chat_id, group, message_text, entities)
+        if link_hit:
+            decision = (
+                self._apply_keep_alert(link_hit)
+                if group.action_mode == "keep_alert"
+                else link_hit
+            )
+            return group, decision
+
+        layer1 = await self.check_layer1(chat_id, message_text)
+        if layer1:
+            decision = (
+                self._apply_keep_alert(layer1)
+                if group.action_mode == "keep_alert"
+                else layer1
+            )
+            return group, decision
+
+        if not message_text.strip():
+            return group, _SAFE_EMPTY
+
+        if not group.ai_enabled:
+            return group, _SAFE_NO_AI
+
+        _, ban_rules_text, suspect_rules_text = self._resolve_rules(group)
+        if not ban_rules_text.strip() and not suspect_rules_text.strip():
+            return group, _SAFE_NO_RULES
+
+        return group, None
+
+    async def evaluate_ai(
+        self,
+        group: GroupConfig,
+        message_text: str,
+    ) -> ModerationDecision:
+        _, ban_rules_text, suspect_rules_text = self._resolve_rules(group)
+        layer2 = await self.check_layer2(
+            group, message_text, ban_rules_text, suspect_rules_text,
+        )
+        if layer2.flagged and group.action_mode == "keep_alert":
+            return self._apply_keep_alert(layer2)
+        return layer2
+
     async def evaluate(
         self,
         chat_id: int,
         message_text: str,
         entities: list | None = None,
     ) -> tuple[Optional[GroupConfig], ModerationDecision]:
-        group = await self.get_group_config_cached(chat_id)
-        if not group or not group.is_authorized or not group.moderation_enabled:
-            return group, ModerationDecision(
-                flagged=False,
-                classification="SAFE",
-                reason="Moderation disabled or group unauthorized",
-                layer="none",
-                should_delete=False,
-                should_warn=False,
-                should_ban=False,
-            )
-
-        _, ban_rules_text, suspect_rules_text = self._resolve_rules(group)
-
-        link_hit = await self.check_links(chat_id, group, message_text, entities)
-        if link_hit:
-            if group.action_mode == "keep_alert":
-                return group, self._apply_keep_alert(link_hit)
-            return group, link_hit
-
-        layer1 = await self.check_layer1(chat_id, message_text)
-        if layer1:
-            if group.action_mode == "keep_alert":
-                return group, self._apply_keep_alert(layer1)
-            return group, layer1
-
-        if not message_text.strip():
-            return group, ModerationDecision(
-                flagged=False,
-                classification="SAFE",
-                reason="Non-text message",
-                layer="none",
-                should_delete=False,
-                should_warn=False,
-                should_ban=False,
-            )
-
-        layer2 = await self.check_layer2(
-            group, message_text, ban_rules_text, suspect_rules_text,
-        )
-        if layer2.flagged and group.action_mode == "keep_alert":
-            return group, self._apply_keep_alert(layer2)
-        return group, layer2
+        group, instant = await self.evaluate_instant(chat_id, message_text, entities)
+        if instant is not None:
+            return group, instant
+        assert group is not None
+        decision = await self.evaluate_ai(group, message_text)
+        return group, decision
 
     async def invalidate_group_cache(self, chat_id: int) -> None:
         await self.cache.invalidate_group_config(chat_id)

@@ -115,7 +115,10 @@ class AIClassifier:
         return DEFAULT_BASE_URLS.get(provider, DEFAULT_BASE_URLS["openai"])
 
     async def start(self) -> None:
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
+        read_timeout = max(Config.AI_REQUEST_TIMEOUT + 5.0, 15.0)
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(read_timeout, connect=10.0),
+        )
 
     async def close(self) -> None:
         if self._client:
@@ -196,28 +199,34 @@ class AIClassifier:
         strictness = strictness if strictness in STRICTNESS_INSTRUCTIONS else "medium"
         user_prompt = self._build_user_prompt(message_text, ban_rules, suspect_rules, strictness)
 
-        async with self._semaphore:
-            for attempt in range(3):
-                try:
+        for attempt in range(3):
+            try:
+                async with self._semaphore:
                     if self.provider == "gemini":
-                        result = await self._call_gemini(user_prompt)
+                        coro = self._call_gemini(user_prompt)
                     else:
-                        result = await self._call_openai(user_prompt)
-                    return result
-                except httpx.HTTPStatusError as exc:
-                    if exc.response.status_code == 429:
-                        wait = 2 ** attempt
-                        logger.warning("AI rate limited, retrying in %ss", wait)
-                        await asyncio.sleep(wait)
-                        continue
-                    logger.error("AI HTTP error: %s", exc)
-                    return ClassificationResult("SAFE", f"AI error: {exc.response.status_code}")
-                except httpx.TimeoutException:
-                    logger.warning("AI timeout on attempt %s", attempt + 1)
-                    await asyncio.sleep(1)
-                except Exception as exc:
-                    logger.exception("AI classification failed: %s", exc)
-                    return ClassificationResult("SAFE", f"AI unavailable: {exc}")
+                        coro = self._call_openai(user_prompt)
+                    return await asyncio.wait_for(coro, timeout=Config.AI_REQUEST_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "AI request timed out after %.0fs — abandoning",
+                    Config.AI_REQUEST_TIMEOUT,
+                )
+                return ClassificationResult("SAFE", "AI timeout")
+            except httpx.TimeoutException:
+                logger.warning("AI HTTP timeout — abandoning")
+                return ClassificationResult("SAFE", "AI timeout")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 429 and attempt < 2:
+                    wait = 2 ** attempt
+                    logger.warning("AI rate limited, retrying in %ss", wait)
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error("AI HTTP error: %s", exc)
+                return ClassificationResult("SAFE", f"AI error: {exc.response.status_code}")
+            except Exception as exc:
+                logger.exception("AI classification failed: %s", exc)
+                return ClassificationResult("SAFE", f"AI unavailable: {exc}")
 
         return ClassificationResult("SAFE", "AI retries exhausted")
 

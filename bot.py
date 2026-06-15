@@ -107,6 +107,7 @@ def build_application() -> Application:
         Application.builder()
         .token(Config.BOT_TOKEN)
         .request(request)
+        .concurrent_updates(Config.CONCURRENT_UPDATES)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()

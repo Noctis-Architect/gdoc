@@ -4,12 +4,20 @@
 
 Repository: [https://github.com/Noctis-Architect/gdoc](https://github.com/Noctis-Architect/gdoc)
 
+| | |
+|---|---|
+| **Official bot** | [@g_docbot](https://t.me/g_docbot) |
+| **Author / owner** | [@mr_noctis](https://t.me/mr_noctis) |
+
+> **Free to use.** Clone, self-host, modify, and deploy however you like — personal or commercial. No permission required. If you run your own instance, set `SUPER_ADMIN_ID` in `.env` to **your** Telegram numeric ID (from [@userinfobot](https://t.me/userinfobot)).
+
 ---
 
 ## Features
 
-- **Two-layer moderation** — regex/keyword blacklist (Layer 1) + AI classification (Layer 2)
-- **Per-group settings** — strictness level, action mode, warning threshold, custom rules
+- **Two-layer moderation** — regex/keyword blacklist (Layer 1) + AI classification (Layer 2, toggle per group)
+- **Non-blocking pipeline** — local checks run instantly; AI runs in the background with concurrent updates and timeouts
+- **Per-group settings** — strictness level, action mode, warning threshold, custom rules, AI on/off
 - **Super-admin panel** — manage groups, API keys, and global settings from Telegram
 - **Persian UI** — admin panels and messages in Farsi
 - **Production-ready** — SQLite or PostgreSQL, Redis caching, systemd service, polling or webhook mode
@@ -150,6 +158,11 @@ sudo systemctl restart tg_moderator
 | `AI_API_KEY` | — | API key — set via `/superadmin` panel (optional env fallback) |
 | `AI_BASE_URL` | — | Custom API base URL — set via `/superadmin` panel |
 | `AI_MODEL` | `gpt-4o-mini` | Model name — set via `/superadmin` panel |
+| `AI_CONCURRENCY` | `10` | Max parallel AI requests |
+| `AI_REQUEST_TIMEOUT` | `25` | Seconds before an AI call is abandoned |
+| `CONCURRENT_UPDATES` | `64` | Max parallel Telegram update handlers |
+| `OFFICIAL_BOT_USERNAME` | `g_docbot` | Username shown in UI (without `@`) |
+| `OWNER_USERNAME` | `mr_noctis` | Owner contact shown in UI (without `@`) |
 | `DB_BACKEND` | `sqlite` | `sqlite` or `postgres` |
 | `DATABASE_URL` | `sqlite:///./data/gdoc.db` | SQLite path |
 | `POSTGRES_DSN` | — | PostgreSQL connection string (if using postgres) |
@@ -185,12 +198,12 @@ Ensure Redis is running locally before starting the bot.
 Telegram Update
       │
       ▼
-  bot.py (handlers)
+  bot.py (concurrent handlers)
       │
       ▼
 ModerationEngine
-      ├── Layer 1: regex / keyword blacklist (instant)
-      └── Layer 2: AI classifier (OpenAI / Gemini)
+      ├── Instant: links / regex / blacklist
+      └── Background: AI classifier (OpenAI / Gemini), parallel + timeout
       │
       ▼
   Action: delete / warn / ban (per group config)
@@ -253,30 +266,20 @@ gdoc/
 
 ---
 
-## License
+## License & use
 
-See repository for license details.
+This project is **open for everyone**. You may:
 
----
+- use, copy, modify, and distribute the code
+- self-host on your own server with your own bot token
+- use it in personal or commercial projects
+- fork and maintain your own version
 
-## Terms of Use
+No attribution is required, but credit to [@mr_noctis](https://t.me/mr_noctis) is appreciated.
 
-**Official bot:** The only authorized production instance of gdoc is [@g_docbot](https://t.me/g_docbot) on Telegram. Any other bot or deployment that sells access, resells the service, or uses this software for commercial gain without explicit permission from the owner is **not permitted**.
+**Official hosted instance:** [@g_docbot](https://t.me/g_docbot) — operated by the author. Self-hosted deployments are independent; set your own `BOT_TOKEN` and `SUPER_ADMIN_ID`.
 
-**Personal use:** You may install and use this software for **personal, non-commercial** purposes (your own groups, learning, self-hosting).
-
-**Commercial use:** Selling the bot, offering it as a paid service, or monetizing deployments based on this codebase is allowed **only** through the official [@g_docbot](https://t.me/g_docbot) service operated by the project owner.
-
-**Subscriptions & limits**
-
-| Role | Access |
-|------|--------|
-| **Super admin** (owner) | Unlimited — no expiry |
-| **Group admins** | **30 days free** from first `/start`, then account is **deactivated** until renewed |
-
-When a group admin's trial expires, they lose access to `/panel` and admin features. To renew, contact [@mr_noctis](https://t.me/mr_noctis) on Telegram.
-
-**Usage billing:** Message counts are tracked **per group** (7-day, 30-day, and all-time totals). Super admin and group admins can view these stats in the bot panel; pricing is based on processed message volume.
+**Subscription note (official bot only):** On [@g_docbot](https://t.me/g_docbot), group admins get a **30-day free trial** from first `/start`. After that, renewal is via [@mr_noctis](https://t.me/mr_noctis). Self-hosted instances control their own access — change `ADMIN_TRIAL_DAYS` or remove trial logic as you wish.
 
 ---
 
@@ -290,12 +293,20 @@ When a group admin's trial expires, they lose access to `/panel` and admin featu
 
 مخزن گیت‌هاب: [https://github.com/Noctis-Architect/gdoc](https://github.com/Noctis-Architect/gdoc)
 
+| | |
+|---|---|
+| **ربات رسمی** | [@g_docbot](https://t.me/g_docbot) |
+| **نویسنده / مالک** | [@mr_noctis](https://t.me/mr_noctis) |
+
+> **استفاده آزاد.** هر کس می‌تواند کد را clone کند، self-host کند، تغییر دهد و هرطور خواست استفاده کند — شخصی یا تجاری. برای نصب شخصی، `SUPER_ADMIN_ID` را در `.env` برابر **ID عددی خودتان** بگذارید (از [@userinfobot](https://t.me/userinfobot)).
+
 ---
 
 ## امکانات
 
-- **Moderation دو لایه** — فیلتر کلمات/regex (لایه ۱) + طبقه‌بندی AI (لایه ۲)
-- **تنظیمات جدا برای هر گروه** — سطح سخت‌گیری، نوع اقدام، آستانه اخطار، قوانین سفارشی
+- **Moderation دو لایه** — فیلتر کلمات/regex (لایه ۱) + طبقه‌بندی AI (لایه ۲، قابل خاموش/روشن در هر گروه)
+- **پردازش غیرمسدودکننده** — فیلتر محلی فوری؛ AI در پس‌زمینه با اجرای همزمان و تایم‌اوت
+- **تنظیمات جدا برای هر گروه** — سطح سخت‌گیری، نوع اقدام، آستانه اخطار، قوانین سفارشی، خاموش/روشن AI
 - **پنل سوپرادمین** — مدیریت گروه‌ها و تنظیمات سراسری از داخل تلگرام
 - **رابط فارسی** — پیام‌ها و پنل‌های مدیریت به فارسی
 - **آماده production** — SQLite یا PostgreSQL، کش Redis، سرویس systemd، polling یا webhook
@@ -436,6 +447,11 @@ sudo systemctl restart tg_moderator
 | `AI_API_KEY` | — | کلید API — از پنل `/superadmin` (اختیاری در env) |
 | `AI_BASE_URL` | — | آدرس پایه API — از پنل `/superadmin` |
 | `AI_MODEL` | `gpt-4o-mini` | نام مدل — از پنل `/superadmin` |
+| `AI_CONCURRENCY` | `10` | حداکثر درخواست همزمان AI |
+| `AI_REQUEST_TIMEOUT` | `25` | ثانیه تا رها کردن درخواست AI |
+| `CONCURRENT_UPDATES` | `64` | حداکثر handler همزمان تلگرام |
+| `OFFICIAL_BOT_USERNAME` | `g_docbot` | یوزرنیم ربات در UI (بدون `@`) |
+| `OWNER_USERNAME` | `mr_noctis` | تماس مالک در UI (بدون `@`) |
 | `DB_BACKEND` | `sqlite` | `sqlite` یا `postgres` |
 | `REDIS_URL` | `redis://localhost:6379/0` | اتصال Redis |
 | `USE_WEBHOOK` | `false` | `true` برای webhook |
@@ -514,21 +530,17 @@ gdoc/
 
 ---
 
-## شرایط استفاده
+## مجوز و استفاده
 
-**ربات رسمی:** تنها نسخه رسمی و مجاز gdoc در تلگرام، ربات [@g_docbot](https://t.me/g_docbot) است. هیچ ربات یا استقرار دیگری حق **فروش دسترسی**، **فروش مجدد سرویس**، یا **استفاده اقتصادی/تجاری** از این نرم‌افزار بدون اجازه صریح مالک را ندارد.
+این پروژه **برای همه آزاد** است. می‌توانید:
 
-**استفاده شخصی:** هر کس می‌تواند این نرم‌افزار را برای **استفاده شخصی و غیرتجاری** (گروه‌های خود، یادگیری، self-host) نصب و استفاده کند.
+- از کد استفاده، کپی، تغییر و توزیع کنید
+- روی سرور خود با توکن ربات خودتان self-host کنید
+- در پروژه‌های شخصی یا تجاری به کار ببرید
+- fork کنید و نسخه خودتان را نگه دارید
 
-**استفاده تجاری:** فروش ربات، ارائه به‌صورت سرویس پولی، یا کسب درآمد از استقرارهای مبتنی بر این کدبیس، **فقط** از طریق سرویس رسمی [@g_docbot](https://t.me/g_docbot) که توسط مالک پروژه اداره می‌شود مجاز است.
+ذکر نام [@mr_noctis](https://t.me/mr_noctis) الزامی نیست، ولی خوشایند است.
 
-**اشتراک و محدودیت‌ها**
+**نسخه میزبانی‌شده رسمی:** [@g_docbot](https://t.me/g_docbot) — توسط نویسنده. نصب‌های self-host مستقل هستند؛ `BOT_TOKEN` و `SUPER_ADMIN_ID` خودتان را تنظیم کنید.
 
-| نقش | دسترسی |
-|-----|--------|
-| **سوپرادمین (مالک)** | نامحدود — بدون انقضا |
-| **ادمین‌های گروه** | **۳۰ روز رایگان** از اولین `/start`، سپس حساب **غیرفعال** تا زمان تمدید |
-
-پس از پایان دوره آزمایشی، ادمین گروه به `/panel` و امکانات مدیریتی دسترسی ندارد. برای تمدید با [@mr_noctis](https://t.me/mr_noctis) در تلگرام تماس بگیرید.
-
-**محاسبه هزینه:** تعداد پیام‌های پردازش‌شده **به‌ازای هر گروه** ذخیره می‌شود (۷ روز، ۳۰ روز، و کل). سوپرادمین و ادمین همان گروه می‌توانند این آمار را در پنل ربات ببینند؛ هزینه سرویس بر اساس حجم پیام محاسبه می‌شود.
+**نکته اشتراک (فقط ربات رسمی):** روی [@g_docbot](https://t.me/g_docbot) ادمین‌های گروه **۳۰ روز رایگان** از اولین `/start` دارند؛ بعد از آن تمدید از [@mr_noctis](https://t.me/mr_noctis). در نصب شخصی خودتان دسترسی را کنترل می‌کنید — `ADMIN_TRIAL_DAYS` را عوض کنید یا منطق trial را حذف کنید.

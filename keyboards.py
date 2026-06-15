@@ -17,6 +17,7 @@ def _cb(action: str, chat_id: int = 0, extra: str = "") -> str:
 
 def group_admin_panel(chat_id: int, group: dict, *, from_sa: bool = False) -> InlineKeyboardMarkup:
     enabled = i18n.moderation_status(bool(group.get("moderation_enabled")))
+    ai_status = i18n.moderation_status(bool(group.get("ai_enabled", True)))
     strictness = i18n.strictness_label(group.get("strictness", "medium"))
     action = group.get("action_mode", "keep_alert")
     action_label = i18n.action_mode_label(action)
@@ -47,6 +48,12 @@ def group_admin_panel(chat_id: int, group: dict, *, from_sa: bool = False) -> In
             InlineKeyboardButton(
                 f"{i18n.BTN_MODERATION} {enabled}",
                 callback_data=_cb("toggle", chat_id),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"{i18n.BTN_AI} {ai_status}",
+                callback_data=_cb("toggle_ai", chat_id),
             ),
         ],
         [InlineKeyboardButton(i18n.BTN_BLACKLIST, callback_data=_cb("blacklist", chat_id))],

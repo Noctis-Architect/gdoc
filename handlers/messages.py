@@ -87,12 +87,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = update.message.text or update.message.caption or ""
     entities = update.message.entities or update.message.caption_entities or []
     await ctx.db.increment_messages_processed(chat.id)
+    msg_id = update.message.message_id
 
-    group, decision = await ctx.moderation.evaluate(chat.id, text, entities)
-    if not decision.flagged:
+    group, instant = await ctx.moderation.evaluate_instant(chat.id, text, entities)
+    if instant is not None:
+        if instant.flagged:
+            await _apply_moderation_decision(
+                update, context, ctx, group, instant, text, user, chat, msg_id,
+            )
         return
 
-    msg_id = update.message.message_id
+    context.application.create_task(
+        _moderate_with_ai(update, context, ctx, group, text, user, chat, msg_id),
+        name=f"gdoc-ai:{chat.id}:{msg_id}",
+    )
+
+
+async def _moderate_with_ai(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    ctx: BotContext,
+    group,
+    text: str,
+    user,
+    chat,
+    msg_id: int,
+) -> None:
+    try:
+        decision = await ctx.moderation.evaluate_ai(group, text)
+        await _apply_moderation_decision(
+            update, context, ctx, group, decision, text, user, chat, msg_id,
+        )
+    except Exception:
+        logger.exception("AI moderation failed for chat=%s msg=%s", chat.id, msg_id)
+
+
+async def _apply_moderation_decision(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    ctx: BotContext,
+    group,
+    decision,
+    text: str,
+    user,
+    chat,
+    msg_id: int,
+) -> None:
+    if not decision.flagged:
+        return
 
     if decision.instant_action:
         deleted = await safe_delete_message(context, chat.id, msg_id)

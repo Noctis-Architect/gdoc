@@ -104,6 +104,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "threshold": _show_threshold,
         "set_threshold": _set_threshold,
         "toggle": _toggle_moderation,
+        "toggle_ai": _toggle_ai,
         "rules": _show_rules_menu,
         "rules_ban": _prompt_ban_rules,
         "rules_suspect": _prompt_suspect_rules,
@@ -435,6 +436,16 @@ async def _toggle_moderation(query, ctx: BotContext, chat_id: int, _extra: str, 
         return
     new_value = 0 if group.get("moderation_enabled") else 1
     await ctx.db.update_group_field(chat_id, "moderation_enabled", new_value)
+    await ctx.moderation.invalidate_group_cache(chat_id)
+    await _show_group_panel(query, ctx, chat_id, "", _context)
+
+
+async def _toggle_ai(query, ctx: BotContext, chat_id: int, _extra: str, _context) -> None:
+    group = await ctx.db.group_to_dict(chat_id)
+    if not group:
+        return
+    new_value = 0 if group.get("ai_enabled", True) else 1
+    await ctx.db.update_group_field(chat_id, "ai_enabled", new_value)
     await ctx.moderation.invalidate_group_cache(chat_id)
     await _show_group_panel(query, ctx, chat_id, "", _context)
 
